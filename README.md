@@ -2,12 +2,21 @@
 
 Shared build-engine scripts for the साहित्यशास्त्रम् (sahitya) and शास्त्रम्
 (shastra) MkDocs sites. Each site's own repo keeps its own content,
-`gloss_types.yaml`, and `site_config.yaml` — this repo holds only the
-Python engine code that's genuinely identical between them, pulled in as
-a git submodule at `scripts/`.
+`gloss_types.yaml`, and `site_config.yaml` — this repo holds the Python
+engine code, pulled in as a git submodule at `scripts/`.
 
 ## What's here
 
+- `generate_indices.py` — the main site-generation script. Now genuinely
+  identical between both sites (verified byte-for-byte): the one real
+  behavioral difference between them — the chandas/alankara meter/figure
+  glossary, which shastra's content has no use for — is a config-gated
+  feature (`topics: chandas_alankara: true/false` in each site's own
+  `site_config.yaml`, default false), not a code fork. When off: no
+  chandas.md/alankara.md are read even if present, the श्लोकसूची list has
+  no छन्दः/अलङ्काराः columns, and beautifulsoup4 (only needed for that
+  hand-authored-table parsing) is never imported at all — a site with
+  the flag off doesn't need it installed.
 - `dict_extract.py` — `<dict>`/`<dictref>` tag extraction for the
   external dictionary-generation workflow.
 - `dict_render.py` — rendering/key-generation for that same workflow.
@@ -16,23 +25,9 @@ a git submodule at `scripts/`.
 - `macros_env.py` — the `xref()` Jinja macro for hand-authored
   cross-references.
 
-## What's deliberately NOT here yet
-
-`generate_indices.py` — the main site-generation script — is not in this
-repo yet. It's *almost* identical between the two sites now (topics,
-paribhasha removal, gloss shorthand, and the directory-layout mechanism
-are all fully unified), but sahitya's copy still carries the
-chandas/alankara meter/figure glossary (TableEntry, build_glossary_page,
-render_glossary_entry_page, the Shloka Table's छन्दः/अलङ्काराः columns,
-the BeautifulSoup dependency), which shastra's content has no use for.
-
-Folding that in requires making chandas/alankara a genuinely optional,
-config-gated feature (only active when a site's `site_config.yaml` says
-so — analogous to how `topics:` itself is already optional) rather than
-"absent chandas.md just prints a warning on every build," which is what
-would happen today if the two copies were merged as-is. Once that's
-done, `generate_indices.py` can move into this repo too and both sites
-would build from one identical copy end to end.
+Each site keeps its own `gloss_types.yaml` and `site_config.yaml`
+directly in its own `scripts/` (not in this repo) — those are content
+decisions per site, not engine code.
 
 ## Setting this up on GitHub
 
@@ -52,14 +47,15 @@ From inside `sahitya/` (and separately, identically, inside `shastra/`):
 
 ```bash
 # remove the now-duplicated copies that live directly in scripts/
-git rm scripts/dict_extract.py scripts/dict_render.py scripts/generate_dict.py \
-       scripts/mkdocs_hooks.py scripts/macros_env.py
+git rm scripts/generate_indices.py scripts/dict_extract.py scripts/dict_render.py \
+       scripts/generate_dict.py scripts/mkdocs_hooks.py scripts/macros_env.py
 
 # add the engine repo as a submodule, checked out AT scripts/engine
 git submodule add git@github.com:<you>/sahitya-shastra-engine.git scripts/engine
 
 # symlink (or copy, if you'd rather not symlink) each shared file back to
-# where generate_indices.py/mkdocs.yml expect to find it
+# where mkdocs.yml/the build workflow expect to find it
+ln -s engine/scripts/generate_indices.py scripts/generate_indices.py
 ln -s engine/scripts/dict_extract.py scripts/dict_extract.py
 ln -s engine/scripts/dict_render.py scripts/dict_render.py
 ln -s engine/scripts/generate_dict.py scripts/generate_dict.py
@@ -70,9 +66,11 @@ git add scripts .gitmodules
 git commit -m "Pull shared engine scripts in as a submodule"
 ```
 
-`generate_indices.py` and `gloss_types.yaml`/`site_config.yaml` stay
-exactly where they are in each site's own `scripts/` — only the five
-files above move into the submodule.
+`gloss_types.yaml`/`site_config.yaml` stay exactly where they are in each
+site's own `scripts/` — only the six files above move into the
+submodule. Remember to set `topics: chandas_alankara: true` in
+sahitya's `site_config.yaml` (shastra needs no change — false is the
+default).
 
 ### CI (`.github/workflows/deploy.yml`)
 
