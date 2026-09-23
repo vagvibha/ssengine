@@ -160,11 +160,30 @@ import dict_extract
 # ---------------------------------------------------------------------------
 # Paths / constants
 # ---------------------------------------------------------------------------
-
-ROOT = Path(__file__).absolute().parent.parent
+#
+# Deliberately Path(sys.argv[0]) here, NOT Path(__file__) — this matters
+# once this file is reached via a symlink (e.g. scripts/generate_indices.py
+# -> scripts/engine/scripts/generate_indices.py, the shared-engine
+# submodule setup): __file__.resolve() follows the symlink to the
+# submodule's own internal scripts/ directory, giving the wrong ROOT no
+# matter which of .resolve()/.absolute() is used on it, since .absolute()
+# alone only fixes the case where THIS file is the one directly
+# executed — it still breaks the moment another sibling script (e.g.
+# generate_dict.py, also a symlink into the same submodule) imports this
+# module: Python resolves symlinks when computing sys.path[0] for the
+# entry script, so the import machinery can end up loading THIS file via
+# its real (submodule-internal) path instead of its symlinked one, and
+# __file__ reflects whichever path it was actually loaded through.
+# sys.argv[0], in contrast, is the literal invoked path (never symlink-
+# resolved) of whichever script started the process — generate_indices.py
+# or generate_dict.py, either way a symlink living directly in THIS
+# site's own scripts/ directory — so it's the one reliable anchor
+# regardless of which of the two is the entry point or how the other
+# gets imported.
+ROOT = Path(sys.argv[0]).absolute().parent.parent
 DOCS = ROOT / "docs"
 
-SCRIPTS_DIR = Path(__file__).absolute().parent
+SCRIPTS_DIR = Path(sys.argv[0]).absolute().parent
 SITE_CONFIG_PATH = SCRIPTS_DIR / "site_config.yaml"
 GLOSS_TYPES_CONFIG_PATH = SCRIPTS_DIR / "gloss_types.yaml"
 
