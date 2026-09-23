@@ -1,4 +1,4 @@
-# sahitya-shastra-engine
+# Static Site Engine
 
 Shared build-engine scripts for the साहित्यशास्त्रम् (sahitya) and शास्त्रम्
 (shastra) MkDocs sites. Each site's own repo keeps its own content,
@@ -32,12 +32,12 @@ decisions per site, not engine code.
 ## Setting this up on GitHub
 
 ```bash
-cd sahitya-shastra-engine
+cd ssengine
 git init
 git add .
 git commit -m "Initial shared engine: dict generation + macros + hooks"
 git branch -M main
-git remote add origin git@github.com:<you>/sahitya-shastra-engine.git
+git remote add origin git@github.com:<you>/ssengine.git
 git push -u origin main
 ```
 
@@ -50,17 +50,17 @@ From inside `sahitya/` (and separately, identically, inside `shastra/`):
 git rm scripts/generate_indices.py scripts/dict_extract.py scripts/dict_render.py \
        scripts/generate_dict.py scripts/mkdocs_hooks.py scripts/macros_env.py
 
-# add the engine repo as a submodule, checked out AT scripts/engine
-git submodule add git@github.com:<you>/sahitya-shastra-engine.git scripts/engine
+# add the ssengine repo as a submodule, checked out AT scripts/ssengine
+git submodule add git@github.com:<you>/ssengine.git scripts/engine
 
 # symlink (or copy, if you'd rather not symlink) each shared file back to
 # where mkdocs.yml/the build workflow expect to find it
-ln -s engine/scripts/generate_indices.py scripts/generate_indices.py
-ln -s engine/scripts/dict_extract.py scripts/dict_extract.py
-ln -s engine/scripts/dict_render.py scripts/dict_render.py
-ln -s engine/scripts/generate_dict.py scripts/generate_dict.py
-ln -s engine/scripts/mkdocs_hooks.py scripts/mkdocs_hooks.py
-ln -s engine/scripts/macros_env.py scripts/macros_env.py
+ln -s ssengine/scripts/generate_indices.py scripts/generate_indices.py
+ln -s ssengine/scripts/dict_extract.py scripts/dict_extract.py
+ln -s ssengine/scripts/dict_render.py scripts/dict_render.py
+ln -s ssengine/scripts/generate_dict.py scripts/generate_dict.py
+ln -s ssengine/scripts/mkdocs_hooks.py scripts/mkdocs_hooks.py
+ln -s ssengine/scripts/macros_env.py scripts/macros_env.py
 
 git add scripts .gitmodules
 git commit -m "Pull shared engine scripts in as a submodule"
