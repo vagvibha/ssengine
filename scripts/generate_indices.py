@@ -161,10 +161,10 @@ import dict_extract
 # Paths / constants
 # ---------------------------------------------------------------------------
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).absolute().parent.parent
 DOCS = ROOT / "docs"
 
-SCRIPTS_DIR = Path(__file__).resolve().parent
+SCRIPTS_DIR = Path(__file__).absolute().parent
 SITE_CONFIG_PATH = SCRIPTS_DIR / "site_config.yaml"
 GLOSS_TYPES_CONFIG_PATH = SCRIPTS_DIR / "gloss_types.yaml"
 
