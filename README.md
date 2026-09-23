@@ -20,7 +20,9 @@ engine code, pulled in as a git submodule at `scripts/`.
 - `dict_extract.py` — `<dict>`/`<dictref>` tag extraction for the
   external dictionary-generation workflow.
 - `dict_render.py` — rendering/key-generation for that same workflow.
-- `generate_dict.py` — walks the source tree and writes `dict/` output.
+- `generate_dict.py` — walks the source tree and writes `dict/` output,
+  plus the `dict/meta.yaml` / `dict/<folder>/meta.yaml` index files (see
+  "Dictionaries" below).
 - `mkdocs_hooks.py` — Devanagari-safe slugification hook.
 - `macros_env.py` — the `xref()` Jinja macro for hand-authored
   cross-references.
@@ -28,6 +30,66 @@ engine code, pulled in as a git submodule at `scripts/`.
 Each site keeps its own `gloss_types.yaml` and `site_config.yaml`
 directly in its own `scripts/` (not in this repo) — those are content
 decisions per site, not engine code.
+
+## Dictionaries (`dict/`)
+
+Each site declares its dictionaries in its own `scripts/site_config.yaml`:
+
+```yaml
+dictionaries:
+  - name: Kavya        # display name, written to dict/kavya/meta.yaml
+    folder: kavya      # top-level folder under dict/
+  - name: Nataka
+    folder: plays
+```
+
+A text opts in with `dict: folder: kavya` in its own `meta.yaml` (several
+texts can share one folder). If a text's `dict.folder` isn't declared in
+`dictionaries:`, `generate_dict.py` fails the build with an error, even
+when none of that text's chapters are dict-enabled yet, so a typo is
+caught straight away. The build also fails if two texts in the same folder
+have the same directory name, because they would overwrite each other's
+output.
+
+After a successful run, `generate_dict.py` writes the chapter `.txt` files
+as before, then two kinds of index file for the dictionary-build tool:
+
+```yaml
+# dict/meta.yaml
+dictionaries:
+  - kavya
+  - plays
+```
+
+```yaml
+# dict/kavya/meta.yaml
+name: Kavya
+folders:
+  - ks
+  - ka
+```
+
+Only folders and texts that had at least one `.txt` file written on that
+run are listed. Top-level folders follow `dictionaries:` order, and texts
+follow the site's normal text order. Both files are regenerated on every
+run, so don't edit them by hand. Old output folders are not deleted, but
+they drop out of the meta files.
+
+## Tests
+
+```bash
+pip install -r requirements-dev.txt
+python -m pytest
+```
+
+`tests/` has unit tests for the helpers (gloss shorthand, div parsing,
+`<dict>`/`<dictref>` extraction, dict rendering and shloka keys, the
+dictionary registry and meta files, the slugify hook, `xref()`), plus
+end-to-end tests that build a small throwaway site. That site links the
+engine scripts in with symlinks, like a real content repo, and runs
+`generate_dict.py` / `generate_indices.py` in a subprocess.
+`.github/workflows/tests.yml` runs the suite on every push to `main` and
+on every pull request.
 
 ## Setting this up on GitHub
 

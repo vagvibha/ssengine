@@ -5,7 +5,10 @@ generate_dict.py
 
 Walks every book/chapter with a `dict:` block in its meta.yaml and
 writes dict/<folder>/<book>/<chapter>.txt (+ <chapter>-full.txt when
-`chapter_key` is set) for the external dictionary-generation workflow.
+`chapter_key` is set) for the external dictionary-generation workflow,
+plus the generated dict/meta.yaml and dict/<folder>/meta.yaml index
+files (see "Dictionary registry" below — every `dict.folder` must be
+declared in site_config.yaml's `dictionaries:` or the build fails).
 Reads SOURCE .md files directly (never docs/), exactly like
 generate_indices.py does — this script and that one are independent,
 each doing its own pass over the same source tree; neither depends on
@@ -48,11 +51,132 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import yaml
+
 import generate_indices as gi
 import dict_extract as de
 import dict_render as dr
 
 DICT_ROOT = gi.ROOT / "dict"
+META_FILENAME = "meta.yaml"
+
+
+# ---------------------------------------------------------------------------
+# Dictionary registry (site_config.yaml `dictionaries:`) + meta.yaml output
+# ---------------------------------------------------------------------------
+#
+# Each site's scripts/site_config.yaml declares which top-level dict/
+# folders exist and what each dictionary is called:
+#
+#     dictionaries:
+#       - name: Kavya
+#         folder: kavya
+#       - name: Nataka
+#         folder: plays
+#
+# A text opts in with `dict: folder: <folder>` in its own meta.yaml — and
+# that folder MUST be declared here, or the build fails (a typo like
+# `kayva` would otherwise silently create a stray dictionary). Several
+# texts can share one folder; that's the point of keeping the display
+# name here rather than in any one text's meta.yaml.
+#
+# After a successful run, two kinds of meta.yaml are generated for the
+# external dictionary-build tool (both overwritten on every run, never
+# hand-edited):
+#
+#     dict/meta.yaml            dictionaries: [kavya, plays]
+#     dict/<folder>/meta.yaml   name: Kavya
+#                               folders: [ks, ka]
+#
+# Only folders/texts that actually had at least one .txt file written on
+# THIS run are listed, so the meta always matches what's on disk.
+
+
+class DictConfigError(ValueError):
+    """Bad `dictionaries:` registry in site_config.yaml, or a text whose
+    `dict.folder` isn't declared in it. Always fatal."""
+
+
+def load_dictionaries(site_config: dict) -> dict[str, str]:
+    """site_config.yaml's `dictionaries:` list -> {folder: display name},
+    in declaration order. Missing/empty -> {} (fine for a site with no
+    dict-enabled texts; any text that DOES set dict.folder will then
+    fail validation). Anything malformed raises DictConfigError."""
+    raw = site_config.get("dictionaries")
+    if raw is None:
+        return {}
+    if not isinstance(raw, list):
+        raise DictConfigError(
+            f"site_config.yaml: `dictionaries:` must be a list of {{name, folder}} entries, got {raw!r}"
+        )
+    out: dict[str, str] = {}
+    for i, entry in enumerate(raw):
+        if not isinstance(entry, dict):
+            raise DictConfigError(f"site_config.yaml: dictionaries[{i}] must be a mapping with name: and folder:, got {entry!r}")
+        folder = str(entry.get("folder") or "").strip()
+        name = str(entry.get("name") or "").strip()
+        if not folder or not name:
+            raise DictConfigError(f"site_config.yaml: dictionaries[{i}] needs both a non-empty name: and folder:, got {entry!r}")
+        if "/" in folder or "\\" in folder or folder in (".", "..") or folder == META_FILENAME:
+            raise DictConfigError(f"site_config.yaml: dictionaries[{i}] folder {folder!r} must be a plain directory name")
+        if folder in out:
+            raise DictConfigError(f"site_config.yaml: dictionaries: folder {folder!r} is declared more than once")
+        out[folder] = name
+    return out
+
+
+def text_dict_folder(text: gi.Text, dictionaries: dict[str, str]) -> str:
+    """This text's `dict.folder` ("" if it has none), validated against
+    the `dictionaries:` registry — raises DictConfigError if it names a
+    folder that isn't declared there. Checked for every text that sets
+    dict.folder, whether or not any of its chapters are dict-enabled yet,
+    so a typo fails the build straight away."""
+    book_dict = text.meta.get("dict") or {}
+    if not isinstance(book_dict, dict):
+        raise DictConfigError(f"{text.dir}/meta.yaml: `dict:` must be a mapping (e.g. `dict:\\n  folder: kavya`), got {book_dict!r}")
+    folder = str(book_dict.get("folder", "") or "").strip()
+    if folder and folder not in dictionaries:
+        declared = ", ".join(dictionaries) or "none"
+        raise DictConfigError(
+            f"{text.dir}/meta.yaml: dict.folder {folder!r} is not declared in site_config.yaml "
+            f"`dictionaries:` (declared: {declared}). Add it there, or fix the folder name."
+        )
+    return folder
+
+
+def build_meta_files(written: dict[str, list[str]], dictionaries: dict[str, str]) -> dict[str, dict]:
+    """The generated meta.yaml contents, keyed by path relative to dict/.
+    `written` maps folder -> text slugs that had output written this run
+    (in discovery order). Top-level folders follow `dictionaries:`
+    declaration order; a folder with no written texts is left out."""
+    active = [f for f in dictionaries if written.get(f)]
+    files: dict[str, dict] = {META_FILENAME: {"dictionaries": active}}
+    for folder in active:
+        files[f"{folder}/{META_FILENAME}"] = {"name": dictionaries[folder], "folders": list(written[folder])}
+    return files
+
+
+class _IndentedListDumper(yaml.SafeDumper):
+    """Indents block lists under their key (`key:\\n  - item`) instead of
+    PyYAML's default flush-left style — purely cosmetic, same data."""
+    def increase_indent(self, flow=False, indentless=False):
+        return super().increase_indent(flow, False)
+
+
+def dump_meta_yaml(data: dict) -> str:
+    body = yaml.dump(data, Dumper=_IndentedListDumper, allow_unicode=True, sort_keys=False, default_flow_style=False)
+    return "# Generated by generate_dict.py — do not edit by hand.\n" + body
+
+
+def write_meta_files(dict_root: Path, written: dict[str, list[str]], dictionaries: dict[str, str]) -> list[Path]:
+    paths = []
+    for rel, data in build_meta_files(written, dictionaries).items():
+        path = dict_root / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(dump_meta_yaml(data), encoding="utf-8")
+        print(f"wrote {path}")
+        paths.append(path)
+    return paths
 
 
 # ---------------------------------------------------------------------------
@@ -60,15 +184,12 @@ DICT_ROOT = gi.ROOT / "dict"
 # ---------------------------------------------------------------------------
 
 class DictConfig:
-    """This chapter's own `dict:` block, plus its book's `dict.folder`.
+    """This chapter's own `dict:` block, plus its book's (validated) `dict.folder`.
     A chapter with no `dict:` block at all (or no `type:` in it) is not
     dict-enabled — see is_enabled."""
 
-    def __init__(self, text: gi.Text, chapter: gi.Chapter):
-        book_dict = text.meta.get("dict") or {}
-        if not isinstance(book_dict, dict):
-            raise ValueError(f"{text.dir}/meta.yaml: `dict:` must be a mapping (e.g. `dict:\\n  folder: kavya`), got {book_dict!r}")
-        self.folder = str(book_dict.get("folder", "")).strip()
+    def __init__(self, text: gi.Text, chapter: gi.Chapter, folder: str):
+        self.folder = folder  # already validated against the registry — see text_dict_folder
 
         block = chapter.meta.get("dict") or {}
         if not isinstance(block, dict):
@@ -110,7 +231,9 @@ def notes_record(syns: list[str], entry_text: str) -> str:
     return f"- {';'.join(syns)}\n{entry_text}"
 
 
-def process_notes_chapter(text: gi.Text, chapter: gi.Chapter, config: DictConfig) -> None:
+def process_notes_chapter(text: gi.Text, chapter: gi.Chapter, config: DictConfig) -> bool:
+    """Returns True if at least one file was written."""
+    wrote = False
     records: list[str] = []
     full_chapter_parts: list[str] = []  # site-displayed body of every section, for chapter_key
 
@@ -140,6 +263,7 @@ def process_notes_chapter(text: gi.Text, chapter: gi.Chapter, config: DictConfig
     else:
         content = "\n".join(header) + "\n" + "\n\n".join(records) + "\n"
         out_path.write_text(content, encoding="utf-8")
+        wrote = True
         print(f"wrote {out_path} ({len(records)} record(s))")
 
     if config.chapter_key:
@@ -151,7 +275,10 @@ def process_notes_chapter(text: gi.Text, chapter: gi.Chapter, config: DictConfig
             full_entry = dr.render_notes_entry(full_body, text.effective_gloss_types, source_for_warning=chapter.text.dir)
             full_content = "\n".join(header) + "\n" + notes_record([config.chapter_key], full_entry) + "\n"
             full_path.write_text(full_content, encoding="utf-8")
+            wrote = True
             print(f"wrote {full_path} (1 record)")
+
+    return wrote
 
 
 # ---------------------------------------------------------------------------
@@ -169,7 +296,9 @@ def wrap_marker_with_link(shloka_text: str, key: str) -> str:
     return f'{shloka_text[:m.start()]}<a href="bword://{href_key}">{m.group(0)}</a>{shloka_text[m.end():]}'
 
 
-def process_shloka_chapter(text: gi.Text, chapter: gi.Chapter, config: DictConfig) -> None:
+def process_shloka_chapter(text: gi.Text, chapter: gi.Chapter, config: DictConfig) -> bool:
+    """Returns True if at least one file was written."""
+    wrote = False
     records: list[str] = []
     full_chapter_parts: list[str] = []  # for chapter_key, back-to-back shloka text (linked if shloka_key_prefix set)
 
@@ -253,6 +382,7 @@ def process_shloka_chapter(text: gi.Text, chapter: gi.Chapter, config: DictConfi
     else:
         content = "\n".join(header) + "\n" + "\n\n".join(records) + "\n"
         out_path.write_text(content, encoding="utf-8")
+        wrote = True
         print(f"wrote {out_path} ({len(records)} record(s))")
 
     if config.chapter_key:
@@ -266,45 +396,71 @@ def process_shloka_chapter(text: gi.Text, chapter: gi.Chapter, config: DictConfi
         else:
             full_content = "\n".join(full_header) + "\n" + notes_record([config.chapter_key], full_body) + "\n"
             full_path.write_text(full_content, encoding="utf-8")
+            wrote = True
             print(f"wrote {full_path} (1 record)")
+
+    return wrote
 
 
 # ---------------------------------------------------------------------------
 # Chapter dispatch
 # ---------------------------------------------------------------------------
 
-def process_chapter(text: gi.Text, chapter: gi.Chapter) -> None:
-    config = DictConfig(text, chapter)
+def process_chapter(text: gi.Text, chapter: gi.Chapter, folder: str) -> bool:
+    """Returns True if at least one file was written for this chapter."""
+    config = DictConfig(text, chapter, folder)
     if not config.is_enabled:
-        return
+        return False
     if not config.folder:
         gi.warn(f"{text.dir}: dict-enabled chapter {chapter.slug} but book meta.yaml has no dict.folder — skipping")
-        return
+        return False
 
     if config.type == "notes":
-        process_notes_chapter(text, chapter, config)
+        return process_notes_chapter(text, chapter, config)
     elif config.type == "shloka":
-        process_shloka_chapter(text, chapter, config)
+        return process_shloka_chapter(text, chapter, config)
     else:
         gi.warn(f"{text.dir}/{chapter.slug}: unknown dict.type '{config.type}' (expected 'notes' or 'shloka') — skipping")
+        return False
 
 
 def main() -> int:
+    dictionaries = load_dictionaries(gi.SITE_CONFIG)
     any_enabled = False
+    written: dict[str, list[str]] = {}   # folder -> text slugs with output, discovery order
+    owner: dict[tuple[str, str], Path] = {}  # (folder, slug) -> text dir, to catch output collisions
+
     for section in gi.SECTIONS:
         for text in gi.discover_texts(section):
+            folder = text_dict_folder(text, dictionaries)
+            if folder:
+                prev = owner.setdefault((folder, text.slug), text.dir)
+                if prev != text.dir:
+                    raise DictConfigError(
+                        f"{text.dir} and {prev} both write to dict/{folder}/{text.slug}/ — "
+                        f"two texts sharing a dictionary folder need different directory names"
+                    )
             for chapter in gi.discover_chapters(text):
                 try:
-                    config = DictConfig(text, chapter)
+                    config = DictConfig(text, chapter, folder)
                     if config.is_enabled:
                         any_enabled = True
-                    process_chapter(text, chapter)
+                    if process_chapter(text, chapter, folder):
+                        slugs = written.setdefault(folder, [])
+                        if text.slug not in slugs:
+                            slugs.append(text.slug)
                 except Exception as e:
                     print(f"\nFAILED while processing {text.dir}/{chapter.slug}: {e}", file=sys.stderr)
                     raise
 
     if not any_enabled:
         print("No dict-enabled chapters found (no chapter meta.yaml has a dict: block with a type:).")
+
+    # Meta files only after everything above succeeded. Skipped entirely
+    # when there's no output and no dict/ yet (e.g. a site with no
+    # dict-enabled content), so this never creates an empty dict/.
+    if written or DICT_ROOT.exists():
+        write_meta_files(DICT_ROOT, written, dictionaries)
 
     if gi.WARNINGS:
         print(f"\n{len(gi.WARNINGS)} warning(s) — see above.", file=sys.stderr)
