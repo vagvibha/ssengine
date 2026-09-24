@@ -71,7 +71,7 @@ def test_chapter_file_contents(tmp_path):
     )
     shloka = (site / "dict" / "kavya" / "ks" / "05.txt").read_text(encoding="utf-8")
     assert shloka == (
-        "HEADER:title=कुमारसम्भवम् ५\nHEADER:type=shloka\n"
+        "HEADER:title=कुमारसम्भवम् ५\nHEADER:type=shloka\nHEADER:show_anvaya=false\n"
         "पद्यम् ॥५।१॥\n====\n+ e:KS5-01;तप्\n++ अन्वयः इह\n<b>अन्वयः</b>\n<i>अन्वयः इह ।</i>\n"
     )
 

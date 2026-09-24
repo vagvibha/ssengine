@@ -204,9 +204,10 @@ def render_shloka_group(
       gloss_block  — one "<b>{label}</b>\\n<i>{content}</i>" (or just
                      "<i>{content}</i>" with no label) per gloss div
                      found, in document order — caller joins these with
-                     "\\n<br>\\n" between them (a separator, per the
+                     "\\n<br>" between them (a separator, per the
                      spec's worked example: no trailing <br> after the
-                     last one)."""
+                     last one; the next label follows on the <br>'s
+                     own line, not a new one)."""
     text = render_action_spans(group_text, source_for_warning)
     tree = gi.parse_divs(text)
     recognized = gi.recognized_div_classes(gloss_types)
@@ -236,7 +237,7 @@ def shloka_record(
     caller passes it already stripped of its <div> wrapper, e.g. via
     render_structural_divs), the "====" delimiter, then the top part
     ("-"/"+"/"++" lines, each omitted entirely when empty) and the
-    bottom part (glosses, "\\n<br>\\n"-joined)."""
+    bottom part (glosses, "\\n<br>"-joined)."""
     lines = [shloka_text.strip(), "===="]
     if skip:
         lines.append(f"- {';'.join(skip)}")
@@ -244,7 +245,7 @@ def shloka_record(
         lines.append(f"+ {';'.join(syns)}")
     if anvaya:
         lines.append(f"++ {anvaya}")
-    lines.append("\n<br>\n".join(gloss_blocks))
+    lines.append("\n<br>".join(gloss_blocks))
     return "\n".join(lines)
 
 

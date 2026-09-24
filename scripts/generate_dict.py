@@ -374,6 +374,7 @@ def process_shloka_chapter(text: gi.Text, chapter: gi.Chapter, config: DictConfi
     out_dir.mkdir(parents=True, exist_ok=True)
 
     header = base_header(text, config, "shloka", config.skip)
+    header.append("HEADER:show_anvaya=false")  # always, for every dict.type: shloka file
     if hasattr(config, 'auto_shloka') and not config.auto_shloka:
         header.append(f"HEADER:auto_shloka=false")
     out_path = out_dir / f"{chapter.slug}.txt"
