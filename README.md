@@ -31,6 +31,19 @@ Each site keeps its own `gloss_types.yaml` and `site_config.yaml`
 directly in its own `scripts/` (not in this repo) — those are content
 decisions per site, not engine code.
 
+## Reference docs
+
+- [`docs/site_config.md`](docs/site_config.md) — every key in
+  `site_config.yaml`, `gloss_types.yaml`, and book/chapter/topic
+  `meta.yaml`.
+- [`docs/dict.md`](docs/dict.md) — the dictionary workflow: every `dict:`
+  option, the `<dict>`/`<dictref>` tags, and both output formats
+  (including the full-chapter record and `tags_keep`).
+
+Every YAML file is strictly validated: an unknown key, or a value of the
+wrong kind (e.g. `title: [x]`, which YAML reads as a list), fails the
+build instead of being silently ignored.
+
 ## Dictionaries (`dict/`)
 
 Each site declares its dictionaries in its own `scripts/site_config.yaml`:

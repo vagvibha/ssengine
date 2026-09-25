@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import re
 
+import dict_extract as de
 import generate_indices as gi
 
 
@@ -78,10 +79,164 @@ def render_structural_divs(text: str, gloss_types: dict) -> str:
 
 def render_notes_entry(raw_content: str, gloss_types: dict, source_for_warning: object = "") -> str:
     """The full notes-format transform for one dict entry's raw content
-    (a DictCapture.raw_content, or a whole chapter's site-displayed body
-    for the chapter_key/full-chapter entry — see generate_dict.py)."""
+    (a DictCapture.raw_content). The chapter_key full-chapter entry uses
+    render_full_chapter_entry instead."""
     text = render_action_spans(raw_content, source_for_warning)
     text = render_structural_divs(text, gloss_types)
+    return text.strip()
+
+
+# ---------------------------------------------------------------------------
+# Notes-format full-chapter entry (dict.chapter_key) — tags_keep rendering
+# ---------------------------------------------------------------------------
+#
+# The whole chapter as one entry. Input is the chapter's dict view
+# (dict_extract.extract_dict_views: <dict> tags gone, display="False"
+# entries gone, <dictref/> resolved to bword links). Rules:
+#   - Every <div> is named by its gloss data-type (for a gloss-routed
+#     class, see gloss_types.yaml) or else by its class. A div whose
+#     name is in `keep` keeps its content (a gloss as
+#     <b>label</b><i>...</i>, anything else as plain text); any other
+#     div is dropped WITH its content. Nested divs follow the same rule
+#     independently, so an unlisted div inside a kept one is dropped.
+#     A div with no class at all is transparent (content kept).
+#   - <topic> tags go, their content stays. <details> blocks (and
+#     <audio>/<video>/<script>/<style>, HTML comments) go entirely.
+#   - Markdown: `.action` spans -> <i>; other {: .cls} spans -> their
+#     text; headings -> <b>heading</b>; links (incl. xref() macros) ->
+#     their text; images, footnote markers/definitions, {{ }}/{% %}
+#     macros, stray {: ...} attribute lists -> removed. **bold**,
+#     *italic*, list markers and newlines are left exactly as written.
+#   - HTML: only <b>, <i>, <u>, <br> and bword:// links survive; every
+#     other tag is removed and its text kept.
+
+DEFAULT_KEEP_EXTRA = ("shloka",)  # kept by default alongside every gloss type
+NEVER_KEEP = ("details",)         # can't be listed in tags_keep
+
+_DROP_BLOCK_RE = re.compile(
+    r"<(details|audio|video|script|style)\b.*?</\1\s*>|<!--.*?-->", re.DOTALL | re.IGNORECASE,
+)
+_JINJA_RE = re.compile(r"\{\{.*?\}\}|\{%.*?%\}", re.DOTALL)
+_IMAGE_RE = re.compile(r"!\[[^\]\n]*\]\([^)\n]*\)")
+# a footnote definition line plus any indented continuation lines
+_FOOTNOTE_DEF_RE = re.compile(r"^\[\^[^\]\n]+\]:[^\n]*(?:\n[ \t]+[^\n]*)*", re.MULTILINE)
+_FOOTNOTE_REF_RE = re.compile(r"\[\^[^\]\n]+\]")
+_LINK_RE = re.compile(r"\[([^\]\n]+)\]\([^)\n]*\)")
+_HEADING_RE = re.compile(r"^[ \t]{0,3}#{1,6}[ \t]+(.*?)(?:[ \t]+#+)?[ \t]*$", re.MULTILINE)
+_ATTR_LIST_RE = re.compile(r"[ \t]*\{[:#][^}\n]*\}")
+_BWORD_LINK_RE = re.compile(r'<a href="bword://[^"]*">.*?</a>', re.DOTALL)
+_KEPT_TAG_RE = re.compile(r"</?(?:b|i|u)\s*>|<br\s*/?>", re.IGNORECASE)
+_ANY_TAG_RE = re.compile(r"</?[a-zA-Z][^>]*>")
+_EXTRA_BLANK_LINES_RE = re.compile(r"\n[ \t]*\n(?:[ \t]*\n)+")
+_GONE = de.REMOVED_MARK  # marks where something was removed, until the final cleanup
+_GONE_LINE_RE = re.compile(r"^[ \t\x01]*\x01[ \t\x01]*(?:\n|\Z)", re.MULTILINE)
+
+
+def div_name(node: "gi.DivNode", gloss_classes: set[str]) -> str:
+    """What a div is called in tags_keep: its gloss data-type if its
+    class is gloss-routed (and it has one), otherwise its base class."""
+    if node.base_cls in gloss_classes:
+        dt = gi.parse_attrs(node.attrs_str).get("data-type", "").strip().lower()
+        if dt:
+            return dt
+    return node.base_cls
+
+
+def div_names_in(text: str, gloss_types: dict) -> set[str]:
+    """Every div name (see div_name) used anywhere in `text`."""
+    gloss_classes = gi.recognized_div_classes(gloss_types)
+    names: set[str] = set()
+
+    def walk(nodes):
+        for n in nodes:
+            if n.base_cls:
+                names.add(div_name(n, gloss_classes))
+            walk(n.children)
+    walk(gi.parse_divs(text))
+    return names
+
+
+def default_tags_keep(gloss_types: dict) -> set[str]:
+    return set(gloss_types) | set(DEFAULT_KEEP_EXTRA)
+
+
+def _render_divs(text: str, gloss_types: dict, keep: set[str], dropped: dict[str, int]) -> str:
+    gloss_classes = gi.recognized_div_classes(gloss_types)
+
+    def render_span(start: int, end: int, nodes: list) -> str:
+        out, pos = [], start
+        for n in nodes:
+            out.append(text[pos:n.start])
+            out.append(render_node(n))
+            pos = n.end
+        out.append(text[pos:end])
+        return "".join(out)
+
+    def render_node(n) -> str:
+        inner = render_span(n.tag_end, n.inner_end, n.children).strip()
+        if not n.base_cls:
+            return inner
+        name = div_name(n, gloss_classes)
+        if name not in keep:
+            dropped[name] = dropped.get(name, 0) + 1
+            return _GONE
+        if n.base_cls in gloss_classes:
+            type_key = gi.parse_attrs(n.attrs_str).get("data-type", "").strip().lower()
+            label = gi.commentary_label(type_key, n.attrs_str, gloss_types)
+            return f"<b>{label}</b><i>{inner}</i>" if label else f"<i>{inner}</i>"
+        return inner
+
+    return render_span(0, len(text), gi.parse_divs(text))
+
+
+def _action_and_attr_spans(text: str) -> str:
+    """`.action` spans -> <i>...</i>; any other {: .cls} span -> just its text."""
+    def repl(m: re.Match) -> str:
+        content = m.group("bracketed") if m.group("bracketed") is not None else m.group("bare")
+        return f"<i>{content}</i>" if m.group("cls") == "action" else content
+    return gi.BRACKET_ATTR_SPAN_RE.sub(repl, text)
+
+
+def render_full_chapter_entry(
+    dict_body: str, gloss_types: dict, keep: set[str], dropped: dict[str, int] | None = None,
+) -> str:
+    """The notes-format chapter_key entry text for a whole chapter (see
+    the rules above). `dropped` (optional) is filled with
+    {div name: count} for every div left out, for the caller to report."""
+    dropped = {} if dropped is None else dropped
+    text = gi.TOPIC_OPEN_RE.sub("", dict_body)
+    text = gi.TOPIC_CLOSE_RE.sub("", text)
+    text = _DROP_BLOCK_RE.sub(_GONE, text)
+    text = _action_and_attr_spans(text)
+    text = _render_divs(text, gloss_types, keep, dropped)
+
+    text = _JINJA_RE.sub(_GONE, text)
+    text = _IMAGE_RE.sub(_GONE, text)
+    text = _FOOTNOTE_DEF_RE.sub(_GONE, text)
+    text = _FOOTNOTE_REF_RE.sub("", text)
+    text = _LINK_RE.sub(r"\1", text)
+    text = _ATTR_LIST_RE.sub("", text)
+    text = _HEADING_RE.sub(lambda m: f"<b>{m.group(1).strip()}</b>", text)
+
+    # Only <b>/<i>/<u>/<br> and bword links survive; every other tag goes
+    # (its text stays). Protected spans are swapped out first so the
+    # generic strip can't touch them.
+    protected: list[str] = []
+
+    def protect(m: re.Match) -> str:
+        protected.append(m.group(0))
+        return f"\x00{len(protected) - 1}\x00"
+
+    text = _BWORD_LINK_RE.sub(protect, text)
+    text = _KEPT_TAG_RE.sub(protect, text)
+    text = _ANY_TAG_RE.sub("", text)
+    text = re.sub(r"\x00(\d+)\x00", lambda m: protected[int(m.group(1))], text)
+
+    # A line that held nothing but removed material goes away entirely
+    # (rather than leaving a blank line the source never had); elsewhere
+    # the marker just disappears.
+    text = _GONE_LINE_RE.sub("", text).replace(_GONE, "")
+    text = _EXTRA_BLANK_LINES_RE.sub("\n\n", text)
     return text.strip()
 
 

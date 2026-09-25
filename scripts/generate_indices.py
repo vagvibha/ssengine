@@ -203,7 +203,156 @@ def load_yaml(path: Path) -> dict:
     return yaml.safe_load(path.read_text(encoding="utf-8")) or {}
 
 
+# ---------------------------------------------------------------------------
+# Strict config validation
+# ---------------------------------------------------------------------------
+#
+# Every YAML file the engine reads (site_config.yaml, gloss_types.yaml,
+# book/chapter/topic meta.yaml) is checked against the exact set of keys
+# the engine actually uses. An unknown key is a hard error, never a
+# silent no-op: it's almost always a typo (`sources:` for `source:`,
+# `chapter_keys:` for `chapter_key:`) or a key set at the wrong level
+# (`dict.skip` in a book's meta.yaml, which only a chapter reads), and
+# either way the behavior the author expected isn't happening.
+#
+# These sets are the single source of truth — docs/site_config.md and
+# docs/dict.md in this repo document every key listed here. Adding a new
+# key means adding it here AND reading it somewhere.
+
+class ConfigError(ValueError):
+    """A YAML config/meta file has a key or value the engine doesn't
+    recognize, or the wrong shape. Always fatal."""
+
+
+# Each schema maps key -> expected kind:
+#   "str"  a plain scalar (text or number) — NOT a list/mapping. Catches
+#          e.g. `title: [सर्गः-२]`, which YAML reads as a one-item list
+#          (quote it: `title: "[सर्गः-२]"`).
+#   "bool" true/false (unquoted) — catches `shloka_toc: "false"`, which
+#          is a non-empty string and so would count as true.
+#   "list" a list, or a single scalar (treated as a one-item list).
+#   "map" / "maplist" / "any"  checked separately (or not at all).
+SITE_CONFIG_KEYS = {
+    "site_name": "str", "google_analytics_property": "str", "theme": "map", "labels": "map",
+    "topics": "map", "default_chapter_word": "str", "maintain_shloka_linebreak": "bool",
+    "dictionaries": "maplist", "content_sections": "maplist",
+}
+THEME_KEYS = {"primary": "str", "accent": "str", "language": "str"}
+LABEL_KEYS = {k: "str" for k in (
+    "home_title", "home_nav_label", "home_button_label", "intro_nav_label", "author_label",
+    "shloka_list_heading", "references_heading", "definitions_heading",
+    "term_column_heading", "definition_column_heading", "source_column_heading",
+)}
+TOPICS_CONFIG_KEYS = {"dir": "str", "h1_label": "str", "chandas_alankara": "bool"}
+CONTENT_SECTION_KEYS = {
+    "dir": "str", "h1_label": "str", "default_chapter_word": "str",
+    "text_groups": "maplist", "h2_text_label": "str",
+}
+TEXT_GROUP_KEYS = {"dir": "str", "h2_label": "str"}
+DICTIONARY_KEYS = {"name": "str", "folder": "str"}
+
+GLOSS_TYPES_FILE_KEYS = {"supported_css_styles": "list", "types": "maplist"}
+GLOSS_TYPE_ENTRY_KEYS = {
+    "data_type": "str", "label": "str", "label_from_attr": "str", "class": "str",
+    "css_style": "str", "hideable": "bool", "hidden_by_default": "bool",
+}
+
+# `source:` is informational only (where the text came from) — never
+# read by the engine, but allowed so it doesn't have to live in a comment.
+BOOK_META_KEYS = {
+    "title": "str", "author": "str", "source": "any", "order": "str", "ignore": "bool",
+    "header": "str", "chapters": "str", "chapter_type": "str",
+    "default_shloka_type": "str", "default_class": "str",
+    "gloss_types": "maplist", "gloss_labels": "map",
+    "maintain_shloka_linebreak": "bool", "shloka_toc": "bool", "dict": "map",
+}
+BOOK_DICT_KEYS = {"folder": "str"}
+CHAPTER_META_KEYS = {
+    "chapter_name": "str", "chapter_display_style": "str", "full_chapter_label": "str",
+    "default_shloka_type": "str", "default_class": "str", "shloka_toc": "bool", "dict": "map",
+}
+CHAPTER_DICT_KEYS = {
+    "type": "str", "title": "str", "skip": "list", "auto_shloka": "bool",
+    "chapter_key": "str", "shloka_key_prefix": "str", "tags_keep": "list",
+}
+TOPIC_CATEGORY_META_KEYS = {"title": "str", "order": "str", "expanded_by_default": "bool"}
+TOPIC_DIR_META_KEYS = {"title": "str", "order": "str"}
+
+
+def check_keys(data: object, schema: dict[str, str], where: object) -> dict:
+    """Raise ConfigError if `data` isn't a mapping, has any key outside
+    `schema`, or has a value of the wrong kind (see the schema comment
+    above). Returns `data` (None -> {}) so callers can chain it. A key
+    present with no value at all (`key:` alone, i.e. None) is allowed —
+    it means "unset" everywhere in the engine."""
+    if data is None:
+        return {}
+    if not isinstance(data, dict):
+        raise ConfigError(f"{where}: expected a mapping (key: value lines), got {data!r}")
+    unknown = [str(k) for k in data if k not in schema]
+    if unknown:
+        raise ConfigError(
+            f"{where}: unknown key(s) {', '.join(repr(k) for k in unknown)} — nothing reads "
+            f"{'it' if len(unknown) == 1 else 'them'}, so this is probably a typo or a key at the wrong "
+            f"level. Allowed here: {', '.join(sorted(schema))}."
+        )
+    for key, kind in schema.items():
+        value = data.get(key)
+        if value is None:
+            continue
+        if kind == "str" and isinstance(value, (list, dict, bool)):
+            hint = ' (YAML reads [..] as a list — quote it: "[...]")' if isinstance(value, list) else ""
+            raise ConfigError(f"{where}: {key} should be plain text, got {value!r}{hint}")
+        if kind == "bool" and not isinstance(value, bool):
+            raise ConfigError(f"{where}: {key} should be true or false (unquoted), got {value!r}")
+        if kind == "list" and isinstance(value, (dict, bool)):
+            raise ConfigError(f"{where}: {key} should be a list, got {value!r}")
+        if kind == "map" and not isinstance(value, dict):
+            raise ConfigError(f"{where}: {key} should be a mapping (key: value lines), got {value!r}")
+        if kind == "maplist" and not isinstance(value, list):
+            raise ConfigError(f"{where}: {key} should be a list, got {value!r}")
+    return data
+
+
+def _check_list_of_mappings(value: object, schema: dict[str, str], where: str) -> None:
+    if value is None:
+        return
+    if not isinstance(value, list):
+        raise ConfigError(f"{where}: expected a list, got {value!r}")
+    for i, entry in enumerate(value):
+        check_keys(entry, schema, f"{where}[{i}]")
+
+
+def validate_site_config(cfg: dict, where: object) -> None:
+    check_keys(cfg, SITE_CONFIG_KEYS, where)
+    check_keys(cfg.get("theme"), THEME_KEYS, f"{where}: theme")
+    check_keys(cfg.get("labels"), LABEL_KEYS, f"{where}: labels")
+    check_keys(cfg.get("topics"), TOPICS_CONFIG_KEYS, f"{where}: topics")
+    _check_list_of_mappings(cfg.get("dictionaries"), DICTIONARY_KEYS, f"{where}: dictionaries")
+    _check_list_of_mappings(cfg.get("content_sections"), CONTENT_SECTION_KEYS, f"{where}: content_sections")
+    for i, sec in enumerate(cfg.get("content_sections") or []):
+        _check_list_of_mappings(sec.get("text_groups"), TEXT_GROUP_KEYS, f"{where}: content_sections[{i}].text_groups")
+
+
+def validate_book_meta(meta: dict, where: object) -> None:
+    check_keys(meta, BOOK_META_KEYS, where)
+    check_keys(meta.get("dict"), BOOK_DICT_KEYS, f"{where}: dict")
+    _check_list_of_mappings(meta.get("gloss_types"), GLOSS_TYPE_ENTRY_KEYS, f"{where}: gloss_types")
+
+
+CHAPTER_DISPLAY_STYLES = ("full_chapter", "sections")
+
+
+def validate_chapter_meta(meta: dict, where: object) -> None:
+    check_keys(meta, CHAPTER_META_KEYS, where)
+    check_keys(meta.get("dict"), CHAPTER_DICT_KEYS, f"{where}: dict")
+    style = str(meta.get("chapter_display_style") or "").strip()
+    if style and style not in CHAPTER_DISPLAY_STYLES:
+        raise ConfigError(f"{where}: unknown chapter_display_style '{style}' — expected 'full_chapter' or 'sections'")
+
+
 SITE_CONFIG = load_yaml(SITE_CONFIG_PATH)
+validate_site_config(SITE_CONFIG, SITE_CONFIG_PATH)
 if not SITE_CONFIG.get("content_sections"):
     warn(f"{SITE_CONFIG_PATH} has no content_sections: — nothing will be built")
 
@@ -370,8 +519,7 @@ def read_meta(text_dir: Path) -> dict:
             try:
                 return yaml.safe_load(p.read_text(encoding="utf-8")) or {}
             except yaml.YAMLError as e:
-                warn(f"could not parse {p} ({e})")
-                return {}
+                raise ConfigError(f"could not parse {p} ({e})") from e
     return {}
 
 
@@ -566,15 +714,14 @@ def parse_attrs(attr_str: str) -> dict:
 def title_order_sort_key(frontmatter: dict, title: str, source_for_warning: object = "") -> tuple:
     """Shared sort key for anything with an optional numeric `order:` field
     (texts on a section's landing page, topics under विषयाः, ...) — explicit
-    `order:` takes priority (ascending), with unordered entries (or a
-    non-numeric order:) falling back to alphabetical-by-title, sorted after
-    every explicitly ordered one."""
+    `order:` takes priority (ascending), with unordered entries falling
+    back to alphabetical-by-title, sorted after every explicitly ordered
+    one. A non-numeric order: fails the build."""
     order = frontmatter.get("order")
     try:
         order = float(order) if order is not None else float("inf")
     except (TypeError, ValueError):
-        warn(f"{source_for_warning}: 'order: {order!r}' isn't a number — ignoring it, sorting by title instead")
-        order = float("inf")
+        raise ConfigError(f"{source_for_warning}: 'order: {order!r}' isn't a number") from None
     return (order, title)
 
 
@@ -626,9 +773,9 @@ class Text:
             for k, v in raw_labels.items():
                 key = str(k).strip().lower()
                 if key not in self.effective_gloss_types:
-                    warn(f"{directory}/meta.yaml: gloss_labels: references unknown gloss type '{key}' "
-                         f"(not in {GLOSS_TYPES_CONFIG_PATH.name} or this book's own gloss_types:)")
-                    continue
+                    raise ConfigError(
+                        f"{directory}/meta.yaml: gloss_labels: references unknown gloss type '{key}' "
+                        f"(not in {GLOSS_TYPES_CONFIG_PATH.name} or this book's own gloss_types:)")
                 # copy-on-write: never mutate a shared dict (GLOSS_TYPES_BY_KEY's
                 # values are shared across every Text that doesn't override them)
                 self.effective_gloss_types[key] = {**self.effective_gloss_types[key], "label": str(v).strip()}
@@ -670,16 +817,10 @@ class Chapter:
         "full_chapter" (default: every section concatenated onto one
         page, exactly as before) or "sections" (a landing/TOC page for
         the chapter plus one separate output page per section — see
-        render_chapter_sections). Unrecognized values fall back to
-        "full_chapter" with a warning."""
-        style = str(self.meta.get("chapter_display_style", "")).strip() or "full_chapter"
-        if style not in ("full_chapter", "sections"):
-            warn(
-                f"{self.text.dir}/{self.slug}: unknown chapter_display_style '{style}' "
-                f"— expected 'full_chapter' or 'sections' — falling back to 'full_chapter'"
-            )
-            return "full_chapter"
-        return style
+        render_chapter_sections). Any other value fails the build (see
+        validate_chapter_meta)."""
+        # already validated in validate_chapter_meta
+        return str(self.meta.get("chapter_display_style", "")).strip() or "full_chapter"
 
     @property
     def out_file(self) -> Path:
@@ -781,6 +922,7 @@ def discover_texts_in_group(section: SectionConfig, group: TextGroup) -> list[Te
             warn(f"{d} has no meta.yaml/meta.yml — skipping this text")
             continue
         meta = read_meta(d)
+        validate_book_meta(meta, meta_path)
         if meta.get("ignore"):
             print(f"Skipping {d} (ignore: true in meta.yaml)")
             continue
@@ -825,6 +967,7 @@ def discover_chapters(text: Text) -> list[Chapter]:
             warn(f"chapter directory {d} contains no .md sections — skipping")
             continue
         chapter_meta = read_meta(d)  # optional meta.yaml/meta.yml inside the chapter dir (chapter_name, default_shloka_type, default_class, ...)
+        validate_chapter_meta(chapter_meta, find_meta_file(d) or d)
         chapters.append(Chapter(text, name, sections, chapter_meta))
 
     for f in text.dir.glob("*.md"):
@@ -968,6 +1111,7 @@ def discover_topic_categories(topics_src: Path, topics_rel_dir: str) -> list[Top
                      f"topics/ and will be ignored")
             continue
         meta = read_meta(p)
+        check_keys(meta, TOPIC_CATEGORY_META_KEYS, find_meta_file(p) or p)
         title = str(meta.get("title", "")).strip()
         if not title:
             warn(f"{p} is a topic category directory with no meta.yaml 'title:' — skipping "
@@ -984,12 +1128,13 @@ def discover_multifile_topic(d: Path) -> tuple[dict, str]:
     topics IN ITS CATEGORY — same meaning as a single-file topic's
     frontmatter `order:`); every child `*.md` inside `d` carries its OWN
     `order:` in its frontmatter (falling back to filename when
-    absent/non-numeric — same convention as everywhere else, see
+    absent — same convention as everywhere else, see
     title_order_sort_key), and all of them are concatenated in that order
     into one combined body, exactly as if authored as a single file — no
     headings/separators are injected between them; if the source files
     want section headings, they already have their own '#'/'##' lines."""
     meta = read_meta(d)
+    check_keys(meta, TOPIC_DIR_META_KEYS, find_meta_file(d) or d)
     parts = []
     children = sorted(
         d.glob("*.md"),
@@ -1712,6 +1857,8 @@ def load_gloss_types_yaml() -> tuple[dict, set[str]]:
         warn(f"{GLOSS_TYPES_CONFIG_PATH} not found — no gloss data-types will be labeled/hideable/styled")
         return {}, set()
     data = yaml.safe_load(GLOSS_TYPES_CONFIG_PATH.read_text(encoding="utf-8")) or {}
+    check_keys(data, GLOSS_TYPES_FILE_KEYS, GLOSS_TYPES_CONFIG_PATH)
+    _check_list_of_mappings(data.get("types"), GLOSS_TYPE_ENTRY_KEYS, f"{GLOSS_TYPES_CONFIG_PATH}: types")
     supported_styles = {str(s).strip() for s in data.get("supported_css_styles", []) if str(s).strip()}
     by_type: dict[str, dict] = {}
     for entry in data.get("types", []):
@@ -1726,15 +1873,16 @@ def validate_gloss_type_entry(entry: dict, data_type: str, supported_styles: set
     """One-time validation at load/merge time (site-wide gloss_types.yaml
     AND any book's own meta.yaml gloss_types: list — see
     Text.__init__) rather than at every point of use, so a bad entry
-    warns exactly once regardless of how many divs use that data_type."""
+    warns (or fails, for an undeclared css_style) exactly once regardless
+    of how many divs use that data_type."""
     css_style = str(entry.get("css_style", "")).strip()
     if not css_style:
         warn(f"{source}: gloss type '{data_type}' has no css_style: — it'll render with no distinguishing "
              f"visual treatment at all, just the shared base look")
     elif css_style not in supported_styles:
-        warn(f"{source}: gloss type '{data_type}' has css_style: '{css_style}', which isn't declared in "
-             f"{GLOSS_TYPES_CONFIG_PATH.name}'s supported_css_styles: (expected one of {sorted(supported_styles)}) "
-             f"— it'll render with no distinguishing visual treatment at all")
+        raise ConfigError(
+            f"{source}: gloss type '{data_type}' has css_style: '{css_style}', which isn't declared in "
+            f"{GLOSS_TYPES_CONFIG_PATH.name}'s supported_css_styles: (expected one of {sorted(supported_styles)})")
 
 
 GLOSS_TYPES_BY_KEY, SUPPORTED_CSS_STYLES = load_gloss_types_yaml()

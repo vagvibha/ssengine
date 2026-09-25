@@ -18,9 +18,13 @@ split_frontmatter/expand_gloss_shorthand) plus dict_extract.py
 (<dict>/<dictref> extraction) and dict_render.py (.action/gloss
 rendering, shloka key generation).
 
-Any malformed <dict>/<dictref>/shloka-key input raises (DictSyntaxError
-/ ShlokaKeyError propagate straight out of main() with a non-zero exit
-code) — there's too much content to eyeball, so a broken build with a
+The full reference for every `dict:` option, tag and output format is
+docs/dict.md in this repo.
+
+Any malformed <dict>/<dictref>/shloka-key input or bad `dict:` config
+raises (DictSyntaxError / ShlokaKeyError / DictConfigError /
+generate_indices.ConfigError propagate straight out of main() with a
+non-zero exit code) — there's too much content to eyeball, so a broken build with a
 precise file/reason is far safer than silently generating wrong or
 partial dictionary data. See dict_extract.py's own docstring for
 exactly which cases are fatal.
@@ -40,6 +44,12 @@ testing against MG's real content (not just the doc's worked example):
   - "++" is exactly the अन्वयः-type gloss's own content (tags stripped,
     whitespace collapsed to single spaces); omitted entirely when no
     अन्वयः gloss exists for that shloka.
+  - A notes chapter's chapter_key entry is the whole chapter's dict
+    view, rendered by dict_render.render_full_chapter_entry: divs kept
+    or dropped per dict.tags_keep (default: every gloss type + shloka),
+    <dict>/<topic> tags removed with their text kept, <dictref/>
+    resolved to bword links, Markdown/HTML reduced to what the
+    dictionary supports.
   - A shloka's own gloss divs are everything between its <div
     class="shloka"> and the NEXT such div (or end of the section) —
     only applies for dict.type: shloka (a shloka inside a dict.type:
@@ -48,6 +58,7 @@ testing against MG's real content (not just the doc's worked example):
 """
 from __future__ import annotations
 
+import re
 import sys
 from pathlib import Path
 
@@ -203,10 +214,42 @@ class DictConfig:
         self.auto_shloka = bool(block.get("auto_shloka", True))
         self.chapter_key = str(block.get("chapter_key", "")).strip()
         self.shloka_key_prefix = str(block.get("shloka_key_prefix", "")).strip()
+        # None = not set (use the default: every gloss type + shloka);
+        # a list (possibly empty) = exactly these names. See
+        # dict_render.render_full_chapter_entry.
+        self.tags_keep: list[str] | None = (
+            [t.lower() for t in gi.as_list(block.get("tags_keep"))] if "tags_keep" in block else None
+        )
+
+        where = f"{text.dir}/{chapter.slug}/meta.yaml: dict"
+        if block and not self.type:
+            raise DictConfigError(f"{where} has no type: (expected 'notes' or 'shloka') — without it nothing is generated")
+        if self.type and self.type not in ("notes", "shloka"):
+            raise DictConfigError(f"{where}.type '{self.type}' — expected 'notes' or 'shloka'")
+        if self.tags_keep is not None:
+            if self.type != "notes":
+                raise DictConfigError(f"{where}.tags_keep only applies to type: notes chapters")
+            if not self.chapter_key:
+                raise DictConfigError(f"{where}.tags_keep is set but chapter_key isn't — tags_keep only "
+                                      f"affects the chapter_key full-chapter entry")
+            never = [t for t in self.tags_keep if t in dr.NEVER_KEEP]
+            if never:
+                raise DictConfigError(f"{where}.tags_keep: {', '.join(never)} can't be kept (always dropped)")
 
     @property
     def is_enabled(self) -> bool:
         return bool(self.type)
+
+
+_TRAILING_WS_RE = re.compile(r"[ \t]+$", re.MULTILINE)
+
+
+def write_dict_file(path: Path, content: str) -> None:
+    """Write one chapter .txt file with trailing spaces/tabs removed from
+    every line. Markdown's two-space hard line break is only there for
+    the site; the dictionary builder turns each newline into <br> on its
+    own, so trailing whitespace is never meaningful in dict output."""
+    path.write_text(_TRAILING_WS_RE.sub("", content), encoding="utf-8")
 
 
 def out_dir_for(config: DictConfig, text: gi.Text) -> Path:
@@ -227,6 +270,43 @@ def base_header(text: gi.Text, config: DictConfig, type_: str, skip: list[str]) 
 # Notes format
 # ---------------------------------------------------------------------------
 
+_BOOK_DIV_NAMES: dict[Path, set[str]] = {}
+
+
+def book_div_names(text: gi.Text) -> set[str]:
+    """Every div name (gloss data-type or class — see
+    dict_render.div_name) used anywhere in this book's sections. Cached
+    per book: tags_keep is validated against it, so a name that's valid
+    for the book can be listed in every chapter's tags_keep even if some
+    chapter doesn't happen to use it."""
+    if text.dir not in _BOOK_DIV_NAMES:
+        names: set[str] = set()
+        for ch in gi.discover_chapters(text):
+            for section in ch.sections:
+                _, body = gi.split_frontmatter(section.read_text(encoding="utf-8"))
+                body = gi.expand_gloss_shorthand(body, text.effective_gloss_types, source_for_warning=section)
+                names |= dr.div_names_in(body, text.effective_gloss_types)
+        _BOOK_DIV_NAMES[text.dir] = names
+    return _BOOK_DIV_NAMES[text.dir]
+
+
+def resolve_tags_keep(text: gi.Text, chapter: gi.Chapter, config: "DictConfig") -> set[str]:
+    """The set of div names kept in this chapter's full-chapter entry:
+    dict.tags_keep if set (validated — every name must be one of this
+    book's gloss types, 'shloka', or a div name used somewhere in this
+    book), otherwise the default (every gloss type + shloka)."""
+    if config.tags_keep is None:
+        return dr.default_tags_keep(text.effective_gloss_types)
+    known = dr.default_tags_keep(text.effective_gloss_types) | book_div_names(text)
+    unknown = [t for t in config.tags_keep if t not in known]
+    if unknown:
+        raise DictConfigError(
+            f"{text.dir}/{chapter.slug}/meta.yaml: dict.tags_keep: {', '.join(repr(t) for t in unknown)} "
+            f"isn't a gloss type or a div class used in this book (known: {', '.join(sorted(known))})"
+        )
+    return set(config.tags_keep)
+
+
 def notes_record(syns: list[str], entry_text: str) -> str:
     return f"- {';'.join(syns)}\n{entry_text}"
 
@@ -235,13 +315,14 @@ def process_notes_chapter(text: gi.Text, chapter: gi.Chapter, config: DictConfig
     """Returns True if at least one file was written."""
     wrote = False
     records: list[str] = []
-    full_chapter_parts: list[str] = []  # site-displayed body of every section, for chapter_key
+    full_chapter_parts: list[str] = []  # dict view of every section, for chapter_key
+    keep = resolve_tags_keep(text, chapter, config) if config.chapter_key else set()  # validate before writing anything
 
     for section in chapter.sections:
         raw = section.read_text(encoding="utf-8")
         fm, body = gi.split_frontmatter(raw)
         body = gi.expand_gloss_shorthand(body, text.effective_gloss_types, source_for_warning=section)
-        site_body, captures = de.extract_dict_and_ref_tags(body, source_for_warning=section)
+        _, dict_body, captures = de.extract_dict_views(body, source_for_warning=section)
 
         for cap in captures:
             if not cap.syns:
@@ -251,7 +332,7 @@ def process_notes_chapter(text: gi.Text, chapter: gi.Chapter, config: DictConfig
             records.append(notes_record(cap.syns, entry_text))
 
         if config.chapter_key:
-            full_chapter_parts.append(site_body.strip())
+            full_chapter_parts.append(dict_body.strip())
 
     out_dir = out_dir_for(config, text)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -262,7 +343,7 @@ def process_notes_chapter(text: gi.Text, chapter: gi.Chapter, config: DictConfig
         print(f"skipping {out_path} (no entries)")
     else:
         content = "\n".join(header) + "\n" + "\n\n".join(records) + "\n"
-        out_path.write_text(content, encoding="utf-8")
+        write_dict_file(out_path, content)
         wrote = True
         print(f"wrote {out_path} ({len(records)} record(s))")
 
@@ -272,9 +353,13 @@ def process_notes_chapter(text: gi.Text, chapter: gi.Chapter, config: DictConfig
         if not full_body:
             print(f"skipping {full_path} (no entries)")
         else:
-            full_entry = dr.render_notes_entry(full_body, text.effective_gloss_types, source_for_warning=chapter.text.dir)
+            dropped: dict[str, int] = {}
+            full_entry = dr.render_full_chapter_entry(full_body, text.effective_gloss_types, keep, dropped)
+            if dropped:
+                summary = ", ".join(f"{name} ×{n}" for name, n in sorted(dropped.items()))
+                print(f"  {full_path}: left out (not in tags_keep): {summary}")
             full_content = "\n".join(header) + "\n" + notes_record([config.chapter_key], full_entry) + "\n"
-            full_path.write_text(full_content, encoding="utf-8")
+            write_dict_file(full_path, full_content)
             wrote = True
             print(f"wrote {full_path} (1 record)")
 
@@ -382,7 +467,7 @@ def process_shloka_chapter(text: gi.Text, chapter: gi.Chapter, config: DictConfi
         print(f"skipping {out_path} (no entries)")
     else:
         content = "\n".join(header) + "\n" + "\n\n".join(records) + "\n"
-        out_path.write_text(content, encoding="utf-8")
+        write_dict_file(out_path, content)
         wrote = True
         print(f"wrote {out_path} ({len(records)} record(s))")
 
@@ -396,7 +481,7 @@ def process_shloka_chapter(text: gi.Text, chapter: gi.Chapter, config: DictConfi
             print(f"skipping {full_path} (no entries)")
         else:
             full_content = "\n".join(full_header) + "\n" + notes_record([config.chapter_key], full_body) + "\n"
-            full_path.write_text(full_content, encoding="utf-8")
+            write_dict_file(full_path, full_content)
             wrote = True
             print(f"wrote {full_path} (1 record)")
 
@@ -413,16 +498,13 @@ def process_chapter(text: gi.Text, chapter: gi.Chapter, folder: str) -> bool:
     if not config.is_enabled:
         return False
     if not config.folder:
-        gi.warn(f"{text.dir}: dict-enabled chapter {chapter.slug} but book meta.yaml has no dict.folder — skipping")
-        return False
+        raise DictConfigError(
+            f"{text.dir}/{chapter.slug}/meta.yaml has a dict: block, but the book's meta.yaml has no "
+            f"dict.folder — nothing would be generated")
 
     if config.type == "notes":
         return process_notes_chapter(text, chapter, config)
-    elif config.type == "shloka":
-        return process_shloka_chapter(text, chapter, config)
-    else:
-        gi.warn(f"{text.dir}/{chapter.slug}: unknown dict.type '{config.type}' (expected 'notes' or 'shloka') — skipping")
-        return False
+    return process_shloka_chapter(text, chapter, config)
 
 
 def main() -> int:

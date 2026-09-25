@@ -112,6 +112,11 @@ DICT_OPEN_RE = re.compile(r'<dict\b((?:[^>"]|"[^"]*")*?)(/?)>')
 DICT_CLOSE_RE = re.compile(r"</dict\s*>")
 DICTREF_RE = re.compile(r'<dictref\b((?:[^>"]|"[^"]*")*)/>')
 
+# Left in the dict view (never the site body) where a hidden entry was
+# removed, so the full-chapter renderer can drop a line that held
+# nothing else — see dict_render.render_full_chapter_entry.
+REMOVED_MARK = "\x01"
+
 
 @dataclass
 class DictCapture:
@@ -155,15 +160,31 @@ def resolve_dictrefs_in_text(text: str, source_for_warning: object = "") -> tupl
 def extract_dict_and_ref_tags(
     body: str, source_for_warning: object = "",
 ) -> tuple[str, list[DictCapture]]:
+    """(site_body, captures) — see extract_dict_views for the details."""
+    site_body, _, captures = extract_dict_views(body, source_for_warning)
+    return site_body, captures
+
+
+def extract_dict_views(
+    body: str, source_for_warning: object = "",
+) -> tuple[str, str, list[DictCapture]]:
     """One pass over a raw section body — run AFTER expand_gloss_shorthand
     (so shorthand gloss tags inside a <dict> block are already real
     <div class="gloss" data-type="..."> divs) but BEFORE
     process_content_sections/extract_shlokas (which must never see a
     <dict>/<dictref> tag at all).
 
-    Returns (site_body, captures):
+    Returns (site_body, dict_body, captures):
       site_body   — safe to hand straight to the rest of
                     generate_indices.py's existing pipeline.
+      dict_body   — the same running text as site_body (every <dict>
+                    tag gone, display="False"/self-closing entries gone
+                    with their content, since they aren't part of the
+                    text), except each <dictref/> is resolved to its
+                    `<a href="bword://ref">text</a>` link instead of
+                    being stripped. Used for a notes chapter's
+                    chapter_key full-chapter entry. Removed entries
+                    leave a REMOVED_MARK behind (see there).
       captures    — one DictCapture per <dict> tag (paired or self-
                     closing), in document order, for generate_dict.py.
                     A bare <dictref> NOT inside any <dict> block does
@@ -182,14 +203,13 @@ def extract_dict_and_ref_tags(
         tokens.append((m.start(), m.end(), "dictref", m.group(1), True))
     tokens.sort(key=lambda t: t[0])
 
-    site_splices: list[tuple[int, int, str]] = []
+    site_splices: list[tuple[int, int, str]] = []  # <dict> tag splices, shared by both views
     dictref_dict_repl: dict[tuple[int, int], str] = {}
 
     for start, end, kind, attrs_str, _ in tokens:
         if kind != "dictref":
             continue
         site_repl, dict_repl = _dictref_replacement(attrs_str, source_for_warning)
-        site_splices.append((start, end, site_repl))
         dictref_dict_repl[(start, end)] = dict_repl
 
     def resolve_dictrefs(text: str, base_offset: int) -> str:
@@ -219,7 +239,7 @@ def extract_dict_and_ref_tags(
                 as_syn_list(attrs.get("syns", "")), attrs.get("entry", ""),
                 display=False, self_closing=True, start=start,
             ))
-            site_splices.append((start, end, ""))
+            site_splices.append((start, end, REMOVED_MARK))
             continue
 
         if kind == "dict_open":  # paired open
@@ -247,13 +267,27 @@ def extract_dict_and_ref_tags(
             site_splices.append((o_start, o_end, ""))
             site_splices.append((start, end, ""))
         else:
-            site_splices.append((o_start, end, ""))
+            site_splices.append((o_start, end, REMOVED_MARK))
 
     if stack:
         o_start, _, _ = stack[0]
         raise DictSyntaxError(source_for_warning, f"<dict> opened at offset {o_start} was never closed")
 
-    return apply_splices(body, site_splices), captures
+    # A <dictref/> inside a display="False" <dict> is already covered by
+    # that tag's own whole-span removal splice (and was resolved into the
+    # capture above), so it gets no splice of its own here — two
+    # overlapping splices would be an error.
+    removed_spans = [(s, e) for s, e, _ in site_splices if e > s]
+    site_ref_splices, view_ref_splices = [], []
+    for (s, e), dict_repl in dictref_dict_repl.items():
+        if any(rs <= s and e <= re_ for rs, re_ in removed_spans):
+            continue
+        site_ref_splices.append((s, e, ""))
+        view_ref_splices.append((s, e, dict_repl))
+    site_only = [(s, e, "" if r == REMOVED_MARK else r) for s, e, r in site_splices]
+    site_body = apply_splices(body, site_only + site_ref_splices)
+    dict_body = apply_splices(body, site_splices + view_ref_splices)
+    return site_body, dict_body, captures
 
 
 # ---------------------------------------------------------------------------
