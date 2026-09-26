@@ -144,3 +144,20 @@ def test_unknown_topic_key_is_an_error(tmp_path, where):
     r = run_script(site, "generate_indices.py")
     assert r.returncode != 0
     assert "term_colum_heading" in r.stderr
+
+
+# ---------------------------------------------------------------------------
+# default_class gaps with nothing readable in them
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("filler", ["<br>", "<br/>", " <BR /> \n<br>", "&nbsp;", "<!-- note -->", "\n\n"])
+def test_gap_without_real_content_is_not_wrapped(gloss_types, filler):
+    src = f'<tika data-name="A">a</tika>\n\n{filler}\n\n<tika data-name="B">b</tika>'
+    out = wrap(src, gloss_types)
+    assert 'data-type="notes"' not in out   # no labeled-but-empty wrapper
+    assert filler.strip() in out             # left in place, as plain markup
+
+
+def test_gap_with_text_and_br_is_still_wrapped(gloss_types):
+    src = '<tika data-name="A">a</tika>\n\nreal text<br>\n\n<tika data-name="B">b</tika>'
+    assert wrap(src, gloss_types).count('data-type="notes"') == 1

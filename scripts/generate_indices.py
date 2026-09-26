@@ -715,6 +715,16 @@ _UNSPLITTABLE_TAG_RE = re.compile(
 )
 
 
+# Markup that shows nothing readable on its own. A default_class gap made
+# only of this (a stray <br> between two divs, a comment, blank lines) is
+# left as-is instead of becoming a labeled but empty wrapper.
+_NO_CONTENT_RE = re.compile(r'\s+|<br\s*/?>|&nbsp;|<!--.*?-->', re.IGNORECASE | re.DOTALL)
+
+
+def has_real_content(text: str) -> bool:
+    return bool(_NO_CONTENT_RE.sub("", text))
+
+
 def find_unsplittable_blocks(text: str, start: int, end: int, nodes: list[DivNode]) -> list[tuple[int, int]]:
     """Outermost balanced <details>...</details> / <table>...</table>
     spans (start, end) within text[start:end] that begin outside every one
@@ -2199,7 +2209,7 @@ def process_content_sections(
         nested inside the default_class wrapper instead of splitting it."""
         if not inner:
             gap = body[run_start:run_end]
-            if gap.strip():
+            if has_real_content(gap):
                 handle_matched(wrap_div_class, wrap_type_key, "", gap, run_start, run_end, pad=True)
             return
         mark = len(splices)
