@@ -126,9 +126,10 @@ Layout expected on disk:
         alankara.md               "
         <category>/
             meta.yaml         title, order, expanded_by_default (default true)
-            <slug>.md         a single-file topic, OR:
+            <slug>.md         a single-file topic (frontmatter: see TOPIC_META_KEYS), OR:
             <slug>/            a multi-file topic directory:
-                meta.yaml       title, order (this topic's position among others IN ITS CATEGORY)
+                meta.yaml       title, order (this topic's position among others IN ITS CATEGORY),
+                                + optional definitions-table heading overrides (TOPIC_META_KEYS)
                 *.md            concatenated in each file's own order: (fallback: filename)
 
     assets/                      (optional, repo root — NOT inside any
@@ -276,7 +277,16 @@ CHAPTER_DICT_KEYS = {
     "chapter_key": "str", "shloka_key_prefix": "str", "tags_keep": "list",
 }
 TOPIC_CATEGORY_META_KEYS = {"title": "str", "order": "str", "expanded_by_default": "bool"}
-TOPIC_DIR_META_KEYS = {"title": "str", "order": "str"}
+# Per-topic overrides of the matching site_config.yaml labels: keys, for
+# the auto-generated परिभाषाः table on that topic's page (see
+# build_topic_definitions_table / render_ref_page).
+TOPIC_LABEL_OVERRIDE_KEYS = (
+    "definitions_heading", "term_column_heading", "definition_column_heading", "source_column_heading",
+)
+# A single-file topic's frontmatter and a multi-file topic's meta.yaml
+# carry exactly the same keys.
+TOPIC_META_KEYS = {"title": "str", "order": "str", **{k: "str" for k in TOPIC_LABEL_OVERRIDE_KEYS}}
+TOPIC_DIR_META_KEYS = TOPIC_META_KEYS
 
 
 def check_keys(data: object, schema: dict[str, str], where: object) -> dict:
@@ -367,6 +377,13 @@ _RAW_LABELS = SITE_CONFIG.get("labels", {}) or {}
 
 def site_label(key: str, default: str) -> str:
     return str(_RAW_LABELS.get(key, "")).strip() or default
+
+
+def page_label(page_meta: dict | None, key: str, default: str) -> str:
+    """site_label, but a page's own frontmatter/meta.yaml wins if it sets
+    `key` (see TOPIC_LABEL_OVERRIDE_KEYS)."""
+    own = str((page_meta or {}).get(key) or "").strip()
+    return own or site_label(key, default)
 
 
 class TextGroup:
@@ -681,6 +698,43 @@ def parse_divs(text: str) -> list[DivNode]:
         finish(node, len(text), len(text))
 
     return root
+
+
+# Non-div block elements that default_class wrapping (see
+# process_content_sections' wrap_gaps) must never cut in half. parse_divs
+# only sees <div>s, so without this a <div>/gloss tag inside e.g. a
+# <details> made the synthetic wrapper close INSIDE the <details>,
+# leaving it unbalanced. Deliberately a short explicit list, not "any
+# non-div element".
+UNSPLITTABLE_BLOCK_TAGS = ("details", "table")
+_UNSPLITTABLE_TAG_RE = re.compile(
+    r'<(?P<close>/)?(?P<tag>' + "|".join(UNSPLITTABLE_BLOCK_TAGS) + r')\b(?:[^>"]|"[^"]*")*>',
+    re.IGNORECASE,
+)
+
+
+def find_unsplittable_blocks(text: str, start: int, end: int, nodes: list[DivNode]) -> list[tuple[int, int]]:
+    """Outermost balanced <details>...</details> / <table>...</table>
+    spans (start, end) within text[start:end] that begin outside every one
+    of `nodes` and don't end inside one (i.e. cleanly contain whole divs,
+    never interleave with them). Unbalanced or interleaved markup is just
+    skipped — wrapping then behaves exactly as it did before."""
+    def inside_node(pos: int) -> bool:
+        return any(n.start < pos < n.end for n in nodes)
+
+    blocks: list[tuple[int, int]] = []
+    stack: list[tuple[str, int]] = []
+    for m in _UNSPLITTABLE_TAG_RE.finditer(text, start, end):
+        tag = m.group("tag").lower()
+        if not m.group("close"):
+            stack.append((tag, m.start()))
+        elif stack and stack[-1][0] == tag:
+            _, b_start = stack.pop()
+            if not stack and not inside_node(b_start) and not inside_node(m.end()):
+                blocks.append((b_start, m.end()))
+        else:
+            stack.clear()  # mismatched close — don't guess
+    return blocks
 
 
 def apply_splices(text: str, splices: list[tuple[int, int, str]]) -> str:
@@ -1162,6 +1216,7 @@ def discover_ref_pages(kind: str, folder: Path, rel_dir: str, exclude: set[str] 
         elif p.suffix == ".md":
             text = p.read_text(encoding="utf-8")
             fm, body = split_frontmatter(text)
+            check_keys(fm, TOPIC_META_KEYS, f"{p} (frontmatter)")
             f = p
         else:
             continue
@@ -1576,7 +1631,9 @@ def process_topic_tags(
     return apply_splices(body, splices), counter
 
 
-def build_topic_definitions_table(topic_rel_file: str, entries: list[TopicDefinition]) -> str:
+def build_topic_definitions_table(
+    topic_rel_file: str, entries: list[TopicDefinition], page_meta: dict | None = None,
+) -> str:
     """The auto-generated परिभाषाः table appended to a topic's own page
     when at least one `<topic define="...">` occurrence named it —
     columns संज्ञा (the term being defined — see TopicDefinition; several
@@ -1585,7 +1642,9 @@ def build_topic_definitions_table(topic_rel_file: str, entries: list[TopicDefini
     परिभाषा (the definition, linked back to its exact paragraph), and
     मूलम् (which text/chapter it came from). Column headers come from
     site_config.yaml's labels: (term_column_heading/definition_column_heading/
-    source_column_heading), not hardcoded here. Sorted by संज्ञा, with
+    source_column_heading), not hardcoded here — each overridable per
+    topic via `page_meta` (the topic's own frontmatter / meta.yaml; see
+    page_label). Sorted by संज्ञा, with
     runs of the same term (expected — several texts defining the same
     term differently) sharing one vertically-centered, rowspan'd संज्ञा
     cell instead of repeating it — mirrors sahitya's old <paribhasha>
@@ -1630,9 +1689,9 @@ def build_topic_definitions_table(topic_rel_file: str, entries: list[TopicDefini
             # visible — only what's indexed.
             rows.append("<tr>" + " ".join(cells) + "</tr>")
     thead = "<tr><th>{}</th> <th>{}</th> <th>{}</th></tr>".format(
-        site_label("term_column_heading", "संज्ञा"),
-        site_label("definition_column_heading", "परिभाषा"),
-        site_label("source_column_heading", "मूलम्"),
+        page_label(page_meta, "term_column_heading", "संज्ञा"),
+        page_label(page_meta, "definition_column_heading", "परिभाषा"),
+        page_label(page_meta, "source_column_heading", "मूलम्"),
     )
     return '<table>\n<thead>\n' + thead + "\n</thead>\n<tbody>\n" + "\n".join(rows) + "\n</tbody>\n</table>"
 
@@ -2102,24 +2161,60 @@ def process_content_sections(
             rendered = f"\n\n{rendered}\n\n"
         splices.append((start, end, rendered))
 
-    def wrap_gaps(start: int, end: int, nodes: list[DivNode]) -> None:
+    def flush_run(run_start: int, run_end: int, inner: list[DivNode]) -> None:
+        """Wrap body[run_start:run_end] as one synthetic default_class div.
+        `inner` are div nodes lying inside an unsplittable block (see
+        find_unsplittable_blocks) within this run — each still renders on
+        its own merit (a <tika> inside a <details> is still a tika), just
+        nested inside the default_class wrapper instead of splitting it."""
+        if not inner:
+            gap = body[run_start:run_end]
+            if gap.strip():
+                handle_matched(wrap_div_class, wrap_type_key, "", gap, run_start, run_end, pad=True)
+            return
+        mark = len(splices)
+        visit(inner, run_start, run_end, wrap=False)
+        local = splices[mark:]
+        del splices[mark:]  # applied into `content` below, not to `body` directly
+        shifted = [(s - run_start, e - run_start, r) for s, e, r in local]
+        content = apply_splices(body[run_start:run_end], shifted)
+        rendered = render_commentary_div(wrap_div_class, wrap_type_key, "", content, gloss_types)
+        splices.append((run_start, run_end, f"\n\n{rendered}\n\n"))
+
+    def wrap_gaps(start: int, end: int, nodes: list[DivNode]) -> list[DivNode]:
         """Any non-whitespace text directly inside [start, end) that
         ISN'T covered by one of `nodes` (this level's div children,
         already known to be non-overlapping and in order) gets treated as
         a synthetic default_class div, run through the exact same
-        handling as a real one."""
-        if not wrap_div_class:
-            return
-        cursor = start
-        for n in nodes + [None]:
-            gap_end = n.start if n is not None else end
-            gap = body[cursor:gap_end]
-            if gap.strip():
-                handle_matched(wrap_div_class, wrap_type_key, "", gap, cursor, gap_end, pad=True)
-            cursor = n.end if n is not None else end
+        handling as a real one.
 
-    def visit(nodes: list[DivNode], parent_start: int, parent_end: int):
-        wrap_gaps(parent_start, parent_end, nodes)
+        A balanced <details>/<table> (UNSPLITTABLE_BLOCK_TAGS) that starts
+        in such a gap is never cut in half: the run simply extends through
+        its closing tag, and any divs inside it are rendered inside the
+        wrapper (see flush_run). Returns the nodes NOT absorbed that way —
+        the ones the caller still has to handle at this level."""
+        if not wrap_div_class:
+            return nodes
+        blocks = find_unsplittable_blocks(body, start, end, nodes)
+        standalone: list[DivNode] = []
+        run_start, inner, bi = start, [], 0
+        for n in nodes:
+            while bi < len(blocks) and blocks[bi][1] <= n.start:
+                bi += 1
+            if bi < len(blocks) and blocks[bi][0] <= n.start < blocks[bi][1]:
+                inner.append(n)  # inside a <details>/<table> in this run
+                continue
+            flush_run(run_start, n.start, inner)
+            standalone.append(n)
+            run_start, inner = n.end, []
+        flush_run(run_start, end, inner)
+        return standalone
+
+    def visit(nodes: list[DivNode], parent_start: int, parent_end: int, wrap: bool = True):
+        # wrap=False: already inside a default_class wrapper (see
+        # flush_run) — render divs on their own merit, don't re-wrap gaps.
+        if wrap:
+            nodes = wrap_gaps(parent_start, parent_end, nodes)
         for node in nodes:
             if node.base_cls == "shloka":
                 # shloka is its own leaf unit, handled entirely and
@@ -2137,7 +2232,8 @@ def process_content_sections(
             type_key = parse_attrs(node.attrs_str).get("data-type", "").strip().lower() if is_glosslike else ""
             matched = is_glosslike or bool(TOGGLE_HIDE_RE.search(node.attrs_str))
             if not matched:
-                visit(node.children, node.tag_end, node.inner_end)  # structural divs (dialog-block, ...) — look inside, but leave as-is
+                # structural divs (dialog-block, ...) — look inside, but leave as-is
+                visit(node.children, node.tag_end, node.inner_end, wrap)
                 continue
             if is_glosslike and type_key and type_key not in gloss_types:
                 warn(f"{source_for_warning}: <div class=\"{node.base_cls}\" data-type=\"{type_key}\"> — "
@@ -2723,10 +2819,10 @@ def render_ref_page(page: RefPage, definitions: list[TopicDefinition]) -> str:
         parts.append(f"# {page.title}")
         parts.append("")
     parts.append(body)
-    table_html = build_topic_definitions_table(page.rel_out_file, definitions)
+    table_html = build_topic_definitions_table(page.rel_out_file, definitions, page.frontmatter)
     if table_html:
         parts.append("")
-        parts.append(f"## {site_label('definitions_heading', 'परिभाषाः')}")
+        parts.append(f"## {page_label(page.frontmatter, 'definitions_heading', 'परिभाषाः')}")
         parts.append("")
         parts.append(table_html)
     if page.references:

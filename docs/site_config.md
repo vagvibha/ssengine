@@ -104,7 +104,7 @@ one-item list), **mapping**.
 | `chapters` | text | Heading above the chapter list (default `अध्यायाः / भागाः`). |
 | `chapter_type` | text | Word used in numeric chapter nav labels, e.g. `सर्गः` → "सर्गः 1". |
 | `default_shloka_type` | text | `data-type` given to a `<div class="shloka">` that has none. |
-| `default_class` | text | Class that text outside any div is wrapped in (e.g. `dialog-block`). |
+| `default_class` | text | Class that text outside any div is wrapped in (e.g. `dialog-block`). A `<details>` or `<table>` is never split: it goes whole inside the wrapper, and any divs in it still render as their own type. |
 | `gloss_types` | list of mappings | Book-only gloss types or full overrides (schema as in `gloss_types.yaml`). |
 | `gloss_labels` | mapping | `data_type: label` overrides of a type's fixed label. Unknown type = error. |
 | `maintain_shloka_linebreak` | bool | Overrides the site default. |
@@ -128,18 +128,36 @@ one-item list), **mapping**.
 - **Category** (`topics/<category>/meta.yaml`): `title` (text, required),
   `order` (number), `expanded_by_default` (bool, default true — false
   collapses the category behind a `<details>`).
-- **Multi-file topic** (`topics/<category>/<slug>/meta.yaml`): `title`
-  (text, required), `order` (number).
+- **Multi-file topic** (`topics/<category>/<slug>/meta.yaml`): same keys
+  as a single-file topic's frontmatter (below).
+
+## Topic keys (strictly validated)
+
+A single-file topic's frontmatter (`topics/<category>/<topic>.md`) and a
+multi-file topic's `meta.yaml` take exactly these keys; anything else is
+an error.
+
+| Key | Kind | Meaning |
+|---|---|---|
+| `title` | text | **Required.** |
+| `order` | number | Position among topics in its category (then by title). |
+| `definitions_heading` | text | This page's परिभाषाः heading. Overrides `labels:` in `site_config.yaml`. |
+| `term_column_heading` | text | Same, for the table's term column. |
+| `definition_column_heading` | text | Same, for the definition column. |
+| `source_column_heading` | text | Same, for the source column. |
+
+Each heading falls back to `site_config.yaml`'s `labels:`, then the
+built-in default.
 
 ---
 
-## Markdown frontmatter (not strictly validated)
+## Other Markdown frontmatter (not strictly validated)
 
-Frontmatter in `.md` files isn't checked for unknown keys yet. Keys the
-engine reads:
+Frontmatter in the `.md` files below isn't checked for unknown keys yet.
+Keys the engine reads:
 
 - **Section files:** `title` (section page title in `sections` mode),
   `ignore` (skip the file), `chandas`, `alankara` (default meter/figures
   for its shlokas), `dict: {syns, skip}` (shloka-format dictionary
   defaults, see [dict.md](dict.md#shloka-format)).
-- **Topic files:** `title` (required), `order`.
+- **Files inside a multi-file topic directory:** `order`.
