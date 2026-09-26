@@ -88,6 +88,7 @@ one-item list), **mapping**.
 | `label_from_attr` | text | Or: read the label from this div attribute (e.g. `data-name`). |
 | `hideable` | bool | Member of the page's Show/Hide group. Default true. |
 | `hidden_by_default` | bool | Starts hidden on page load. |
+| `boxed` | text | `open` or `closed`: the shorthand tag (`<tika>…</tika>`) is wrapped in a collapsible `<details>` box, starting expanded (`open`) or collapsed (`closed`). The type's label becomes the box's `<summary>` instead of being printed inside. Shorthand only — a hand-written `<div>` of this type isn't boxed. |
 
 ---
 

@@ -255,8 +255,10 @@ DICTIONARY_KEYS = {"name": "str", "folder": "str"}
 GLOSS_TYPES_FILE_KEYS = {"supported_css_styles": "list", "types": "maplist"}
 GLOSS_TYPE_ENTRY_KEYS = {
     "data_type": "str", "label": "str", "label_from_attr": "str", "class": "str",
-    "css_style": "str", "hideable": "bool", "hidden_by_default": "bool",
+    "css_style": "str", "hideable": "bool", "hidden_by_default": "bool", "boxed": "str",
 }
+# `boxed:` values — see expand_gloss_shorthand.
+BOXED_VALUES = ("open", "closed")
 
 # `source:` is informational only (where the text came from) — never
 # read by the engine, but allowed so it doesn't have to live in a comment.
@@ -1942,6 +1944,10 @@ def validate_gloss_type_entry(entry: dict, data_type: str, supported_styles: set
         raise ConfigError(
             f"{source}: gloss type '{data_type}' has css_style: '{css_style}', which isn't declared in "
             f"{GLOSS_TYPES_CONFIG_PATH.name}'s supported_css_styles: (expected one of {sorted(supported_styles)})")
+    boxed = entry.get("boxed")
+    if boxed is not None and str(boxed).strip().lower() not in BOXED_VALUES:
+        raise ConfigError(
+            f"{source}: gloss type '{data_type}' has boxed: {boxed!r} — expected one of {list(BOXED_VALUES)}")
 
 
 GLOSS_TYPES_BY_KEY, SUPPORTED_CSS_STYLES = load_gloss_types_yaml()
@@ -1966,6 +1972,14 @@ def commentary_css_style_class(type_key: str, gloss_types: dict[str, dict]) -> s
     cfg = gloss_types.get(type_key)
     css_style = str(cfg.get("css_style", "")).strip() if cfg else ""
     return f"{CSS_STYLE_CLASS_PREFIX}{css_style}" if css_style in SUPPORTED_CSS_STYLES else ""
+
+
+# Put on a div by expand_gloss_shorthand when it wrapped that div in a
+# <details> box whose <summary> already shows the label — so
+# render_commentary_div doesn't print it a second time. Never reaches the
+# output (render_commentary_div re-emits only data-type).
+BOXED_MARKER_ATTR = "data-sv-boxed"
+BOXED_MARKER_RE = re.compile(rf'\s{BOXED_MARKER_ATTR}="true"')
 
 
 def commentary_label(type_key: str, attrs: str, gloss_types: dict[str, dict]) -> str:
@@ -2005,7 +2019,7 @@ def commentary_hidden_initial(type_key: str, attrs: str, gloss_types: dict[str, 
 
 
 def render_commentary_div(cls_raw: str, type_key: str, attrs: str, content: str, gloss_types: dict[str, dict]) -> str:
-    label = commentary_label(type_key, attrs, gloss_types)
+    label = "" if BOXED_MARKER_RE.search(attrs) else commentary_label(type_key, attrs, gloss_types)
     classes = cls_raw.strip()
     style_class = commentary_css_style_class(type_key, gloss_types)
     if style_class:
@@ -2058,6 +2072,12 @@ def expand_gloss_shorthand(
     every book's own custom gloss_types: automatically gets shorthand
     for free, with no code change here.
 
+    A type with `boxed: open|closed` in its config is additionally
+    wrapped in `<details markdown="1" [open]><summary>LABEL</summary>
+    ... </details>` (open or collapsed on page load), its label moving
+    into the <summary> instead of being printed inside the div. Shorthand
+    only: a hand-written <div> of that type is never boxed.
+
     Any attributes written on the shorthand tag are forwarded verbatim
     onto the generated div (so `toggle-hide="true"`, `data-name="..."`,
     etc. all still work exactly as they do written out longhand).
@@ -2096,9 +2116,19 @@ def expand_gloss_shorthand(
                     warn(f"{source_for_warning}: </{tag}> shorthand with no matching open <{tag}> — left as-is")
                 continue
             o_tag, o_start, o_end, o_attrs = stack.pop()
-            cls = str(gloss_types[o_tag].get("class", GLOSS_CLASS)).strip().lower() or GLOSS_CLASS
-            splices.append((o_start, o_end, f'<div class="{cls}" data-type="{o_tag}"{o_attrs}>'))
-            splices.append((start, end, "</div>"))
+            cfg = gloss_types[o_tag]
+            cls = str(cfg.get("class", GLOSS_CLASS)).strip().lower() or GLOSS_CLASS
+            boxed = str(cfg.get("boxed") or "").strip().lower()
+            if boxed in BOXED_VALUES:
+                label = commentary_label(o_tag, o_attrs, gloss_types)
+                open_attr = " open" if boxed == "open" else ""
+                splices.append((o_start, o_end,
+                                f'<details markdown="1"{open_attr}>\n<summary>{label}</summary>\n'
+                                f'<div class="{cls}" data-type="{o_tag}"{o_attrs} {BOXED_MARKER_ATTR}="true">'))
+                splices.append((start, end, "</div>\n</details>"))
+            else:
+                splices.append((o_start, o_end, f'<div class="{cls}" data-type="{o_tag}"{o_attrs}>'))
+                splices.append((start, end, "</div>"))
     if warn_enabled:
         for tag, start, end, attrs in stack:
             warn(f"{source_for_warning}: <{tag}> shorthand never closed — left as-is")
