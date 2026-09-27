@@ -1984,8 +1984,8 @@ def commentary_css_style_class(type_key: str, gloss_types: dict[str, dict]) -> s
     return f"{CSS_STYLE_CLASS_PREFIX}{css_style}" if css_style in SUPPORTED_CSS_STYLES else ""
 
 
-# Put on a div by expand_gloss_shorthand when it wrapped that div in a
-# <details> box whose <summary> already shows the label — so
+# Put on a div by expand_gloss_shorthand when it put a <details> box
+# inside that div whose <summary> already shows the label — so
 # render_commentary_div doesn't print it a second time. Never reaches the
 # output (render_commentary_div re-emits only data-type).
 BOXED_MARKER_ATTR = "data-sv-boxed"
@@ -2067,6 +2067,7 @@ def resolve_default_class(default_class: str, gloss_types: dict[str, dict]) -> t
 
 def expand_gloss_shorthand(
     text: str, gloss_types: dict[str, dict], source_for_warning: object = "", warn_enabled: bool = True,
+    allow_boxing: bool = True,
 ) -> str:
     """Shorthand tag syntax for commentary divs: `<TYPE>...</TYPE>`, where
     TYPE is any data_type key already known in this chapter's
@@ -2082,11 +2083,15 @@ def expand_gloss_shorthand(
     every book's own custom gloss_types: automatically gets shorthand
     for free, with no code change here.
 
-    A type with `boxed: open|closed` in its config is additionally
-    wrapped in `<details markdown="1" [open]><summary>LABEL</summary>
-    ... </details>` (open or collapsed on page load), its label moving
-    into the <summary> instead of being printed inside the div. Shorthand
-    only: a hand-written <div> of that type is never boxed.
+    A type with `boxed: open|closed` in its config gets a collapsible box
+    INSIDE its div: `<div ...><details markdown="1" [open]>
+    <summary>LABEL</summary> ... </details></div>` (open or collapsed on
+    page load), its label moving into the <summary> instead of being
+    printed before the content. The div stays outermost so the page's
+    Show/Hide toggle hides the whole box. Shorthand only: a hand-written
+    <div> of that type is never boxed. `allow_boxing=False` (the
+    dictionary build — the box is a website-only feature) expands a
+    boxed type exactly like an unboxed one.
 
     Any attributes written on the shorthand tag are forwarded verbatim
     onto the generated div (so `toggle-hide="true"`, `data-name="..."`,
@@ -2129,13 +2134,13 @@ def expand_gloss_shorthand(
             cfg = gloss_types[o_tag]
             cls = str(cfg.get("class", GLOSS_CLASS)).strip().lower() or GLOSS_CLASS
             boxed = str(cfg.get("boxed") or "").strip().lower()
-            if boxed in BOXED_VALUES:
+            if allow_boxing and boxed in BOXED_VALUES:
                 label = commentary_label(o_tag, o_attrs, gloss_types)
                 open_attr = " open" if boxed == "open" else ""
                 splices.append((o_start, o_end,
-                                f'<details markdown="1"{open_attr}>\n<summary>{label}</summary>\n'
-                                f'<div class="{cls}" data-type="{o_tag}"{o_attrs} {BOXED_MARKER_ATTR}="true">'))
-                splices.append((start, end, "</div>\n</details>"))
+                                f'<div class="{cls}" data-type="{o_tag}"{o_attrs} {BOXED_MARKER_ATTR}="true">\n'
+                                f'<details markdown="1"{open_attr}>\n<summary>{label}</summary>\n'))
+                splices.append((start, end, "\n</details>\n</div>"))
             else:
                 splices.append((o_start, o_end, f'<div class="{cls}" data-type="{o_tag}"{o_attrs}>'))
                 splices.append((start, end, "</div>"))

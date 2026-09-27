@@ -33,9 +33,13 @@ decisions per site, not engine code.
 
 ## Reference docs
 
-- [`docs/site_config.md`](docs/site_config.md) — every key in
-  `site_config.yaml`, `gloss_types.yaml`, and book/chapter/topic
-  `meta.yaml`.
+- [`docs/site_config.md`](docs/site_config.md) — the directory layout;
+  every key in `site_config.yaml`, `gloss_types.yaml`, book/chapter/topic
+  `meta.yaml` and Markdown frontmatter; and which setting wins when the
+  same thing is set at several levels.
+- [`docs/topics.md`](docs/topics.md) — the topics area: topic pages, the
+  `<topic>` tag (every form and what it produces), and the
+  chandas/alankara glossaries.
 - [`docs/dict.md`](docs/dict.md) — the dictionary workflow: every `dict:`
   option, the `<dict>`/`<dictref>` tags, and both output formats
   (including the full-chapter record and `tags_keep`).

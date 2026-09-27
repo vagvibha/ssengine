@@ -1,7 +1,33 @@
 # Configuration reference
 
 Every YAML file the engine reads, and every key it accepts. Dictionary
-settings (the `dict:` blocks) are in [dict.md](dict.md).
+settings (the `dict:` blocks) are in [dict.md](dict.md); the topics area
+and the `<topic>` tag are in [topics.md](topics.md).
+
+## Directory layout
+
+```
+<site repo>/
+  scripts/
+    site_config.yaml           site-wide settings (below)
+    gloss_types.yaml           gloss/commentary types (below)
+    ssengine/                  this engine (git submodule)
+  <section>/                   one per content_sections: entry, e.g. kavya/
+    <group>/                   one per text_groups: entry (texts/ if none are declared)
+      <book>/
+        meta.yaml              book settings — required
+        <chapter>/             a chapter made of several section files:
+          meta.yaml            chapter settings — optional
+          *.md                 section files, in filename order (zero-pad: 01, 02, … 10)
+        <chapter>.md           or: a single-file chapter (no meta.yaml possible)
+  topics/                      the topics area — see topics.md
+  assets/                      copied verbatim to docs/assets/
+```
+
+A `meta.yaml` directly inside `<section>/` is not read. Section-level
+display settings live in `site_config.yaml`'s `content_sections:`. Chapters
+are ordered by directory or file name; a numeric name (`01`) gets a
+numbered nav label, anything else is used as-is.
 
 ## Strict validation
 
@@ -88,7 +114,7 @@ one-item list), **mapping**.
 | `label_from_attr` | text | Or: read the label from this div attribute (e.g. `data-name`). |
 | `hideable` | bool | Member of the page's Show/Hide group. Default true. |
 | `hidden_by_default` | bool | Starts hidden on page load. |
-| `boxed` | text | `open` or `closed`: the shorthand tag (`<tika>…</tika>`) is wrapped in a collapsible `<details>` box, starting expanded (`open`) or collapsed (`closed`). The type's label becomes the box's `<summary>` instead of being printed inside. Shorthand only — a hand-written `<div>` of this type isn't boxed. |
+| `boxed` | text | `open` or `closed`: the shorthand tag's content (`<tika>…</tika>`) is put in a collapsible `<details>` box inside the gloss, starting expanded (`open`) or collapsed (`closed`). The type's label becomes the box's `<summary>` instead of being printed before the content. Show/Hide hides the whole box. Shorthand only — a hand-written `<div>` of this type isn't boxed. Website only — the dictionary shows a boxed gloss like any other (label + content). |
 
 ---
 
@@ -124,23 +150,23 @@ one-item list), **mapping**.
 | `shloka_toc` | bool | Overrides the book's. |
 | `dict` | mapping | Makes the chapter dictionary-enabled. See [dict.md](dict.md#chapter-metayaml). |
 
-## Topic `meta.yaml`
+## Topic category `meta.yaml` (`topics/<category>/meta.yaml`)
 
-- **Category** (`topics/<category>/meta.yaml`): `title` (text, required),
-  `order` (number), `expanded_by_default` (bool, default true — false
-  collapses the category behind a `<details>`).
-- **Multi-file topic** (`topics/<category>/<slug>/meta.yaml`): same keys
-  as a single-file topic's frontmatter (below).
+| Key | Kind | Meaning |
+|---|---|---|
+| `title` | text | **Required** (a category without it is skipped with a warning). |
+| `order` | number | Position among categories (then by title). |
+| `expanded_by_default` | bool | Default true: the category's topics are listed under a heading. False: listed inside a collapsed `<details>`. |
 
 ## Topic keys (strictly validated)
 
 A single-file topic's frontmatter (`topics/<category>/<topic>.md`) and a
-multi-file topic's `meta.yaml` take exactly these keys; anything else is
-an error.
+multi-file topic's `meta.yaml` (`topics/<category>/<topic>/meta.yaml`)
+take exactly these keys; anything else is an error.
 
 | Key | Kind | Meaning |
 |---|---|---|
-| `title` | text | **Required.** |
+| `title` | text | **Required.** Also the name `<topic name="…">` tags must use. |
 | `order` | number | Position among topics in its category (then by title). |
 | `definitions_heading` | text | This page's परिभाषाः heading. Overrides `labels:` in `site_config.yaml`. |
 | `term_column_heading` | text | Same, for the table's term column. |
@@ -152,13 +178,54 @@ built-in default.
 
 ---
 
-## Other Markdown frontmatter (not strictly validated)
+## Markdown frontmatter (not strictly validated)
 
-Frontmatter in the `.md` files below isn't checked for unknown keys yet.
-Keys the engine reads:
+Frontmatter in these `.md` files isn't checked for unknown keys yet, so
+a typo here is silently ignored.
 
-- **Section files:** `title` (section page title in `sections` mode),
-  `ignore` (skip the file), `chandas`, `alankara` (default meter/figures
-  for its shlokas), `dict: {syns, skip}` (shloka-format dictionary
-  defaults, see [dict.md](dict.md#shloka-format)).
-- **Files inside a multi-file topic directory:** `order`.
+**Section files** (`<chapter>/*.md`, and a single-file `<chapter>.md`):
+
+| Key | Kind | Meaning |
+|---|---|---|
+| `title` | text | `sections` mode only: the section's name on the chapter's landing page and in back-links from topic pages. Default: the filename. |
+| `ignore` | bool | Skip this section file entirely. Only works inside a chapter directory — a single-file `<chapter>.md` is always built. |
+| `chandas` | text | Default meter for every shloka in the file (a shloka's own `data-chandas=` wins). |
+| `alankara` | list | Default figure(s) for every shloka in the file (a shloka's own `data-alankara=` wins). |
+| `dict` | mapping | `syns`, `skip`: shloka-format dictionary defaults. See [dict.md](dict.md#shloka-format). |
+
+Any other key is ignored by the engine. Generated pages carry no
+frontmatter, so `{{ page.meta.… }}` can't read these either — use
+`{% set name = "…" %}` in the body instead.
+
+**Files inside a multi-file topic directory** (`topics/<category>/<topic>/*.md`):
+`order` only (the order they're joined in; default: filename).
+
+**`topics/chandas.md` / `topics/alankara.md`:** `title` (default
+`chandas` / `alankara`), `order`.
+
+---
+
+## Which setting wins
+
+When the same thing can be set at several levels, the most specific one
+wins. Left to right is least to most specific; "—" means it can't be set
+at that level.
+
+| Setting | Site | Book `meta.yaml` | Chapter `meta.yaml` | Section frontmatter | On the element itself |
+|---|---|---|---|---|---|
+| Shloka type | — | `default_shloka_type` | `default_shloka_type` | — | `<div class="shloka" data-type="…">` |
+| Wrapper for loose text | — | `default_class` | `default_class` | — | any explicit `<div>` / gloss tag |
+| Shloka listed in श्लोकसूची | (true) | `shloka_toc` | `shloka_toc` | — | `toc="true"` / `toc="false"` |
+| Keep shloka line breaks | `maintain_shloka_linebreak` | `maintain_shloka_linebreak` | — | — | — |
+| Meter / figure | — | — | — | `chandas` / `alankara` | `data-chandas=` / `data-alankara=` |
+| Chapter nav label | `default_chapter_word` → section's `default_chapter_word` | `chapter_type` (+ number) | `chapter_name` | — | — |
+| Gloss type config | `gloss_types.yaml` | `gloss_types` (replaces the whole entry), `gloss_labels` (label only) | — | — | `toggle-hide="true"` / `"false"` |
+| Definitions-table headings | `labels:` | — | — | — | topic frontmatter / `meta.yaml` |
+
+Two details:
+- A book's `gloss_types:` entry replaces the site's entry for that type
+  entirely — any key it leaves out (`boxed`, `hideable`, …) is unset, not
+  inherited.
+- `shloka_toc` and `maintain_shloka_linebreak` count as set whenever the
+  key is present, so `false` at the book level overrides a site-level
+  `true`.

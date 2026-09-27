@@ -284,7 +284,7 @@ def book_div_names(text: gi.Text) -> set[str]:
         for ch in gi.discover_chapters(text):
             for section in ch.sections:
                 _, body = gi.split_frontmatter(section.read_text(encoding="utf-8"))
-                body = gi.expand_gloss_shorthand(body, text.effective_gloss_types, source_for_warning=section)
+                body = gi.expand_gloss_shorthand(body, text.effective_gloss_types, source_for_warning=section, allow_boxing=False)
                 names |= dr.div_names_in(body, text.effective_gloss_types)
         _BOOK_DIV_NAMES[text.dir] = names
     return _BOOK_DIV_NAMES[text.dir]
@@ -321,7 +321,7 @@ def process_notes_chapter(text: gi.Text, chapter: gi.Chapter, config: DictConfig
     for section in chapter.sections:
         raw = section.read_text(encoding="utf-8")
         fm, body = gi.split_frontmatter(raw)
-        body = gi.expand_gloss_shorthand(body, text.effective_gloss_types, source_for_warning=section)
+        body = gi.expand_gloss_shorthand(body, text.effective_gloss_types, source_for_warning=section, allow_boxing=False)
         _, dict_body, captures = de.extract_dict_views(body, source_for_warning=section)
 
         for cap in captures:
@@ -396,7 +396,7 @@ def process_shloka_chapter(text: gi.Text, chapter: gi.Chapter, config: DictConfi
     for section in chapter.sections:
         raw = section.read_text(encoding="utf-8")
         fm, body = gi.split_frontmatter(raw)
-        body = gi.expand_gloss_shorthand(body, text.effective_gloss_types, source_for_warning=section)
+        body = gi.expand_gloss_shorthand(body, text.effective_gloss_types, source_for_warning=section, allow_boxing=False)
         # dict.type: shloka doesn't use <dict> tags at all (synonyms/skip come from
         # frontmatter or the shloka div's own attrs) — but a bare <dictref> can still
         # appear (e.g. right after a shloka's own ॥...॥ marker, inside its div), so

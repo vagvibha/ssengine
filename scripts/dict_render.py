@@ -77,10 +77,26 @@ def render_structural_divs(text: str, gloss_types: dict) -> str:
     return gi.apply_splices(text, splices) if splices else text
 
 
+# A hand-written <details> (the dictionary build never boxes a gloss — see
+# expand_gloss_shorthand's allow_boxing — so any <details> here was typed
+# by the author, e.g. around a mermaid diagram).
+_DETAILS_OPEN_RE = re.compile(r"<details\b", re.IGNORECASE)
+_DETAILS_BLOCK_RE = re.compile(r"<details\b.*?</details\s*>", re.DOTALL | re.IGNORECASE)
+
+
 def render_notes_entry(raw_content: str, gloss_types: dict, source_for_warning: object = "") -> str:
     """The full notes-format transform for one dict entry's raw content
     (a DictCapture.raw_content). The chapter_key full-chapter entry uses
-    render_full_chapter_entry instead."""
+    render_full_chapter_entry instead. A hand-written <details> inside a
+    <dict> entry is an error: there's no sensible dictionary rendering of
+    a collapsible block, and silently dropping part of an entry would
+    be worse."""
+    if _DETAILS_OPEN_RE.search(raw_content):
+        raise de.DictSyntaxError(
+            source_for_warning,
+            "<details> inside a <dict> entry isn't supported in the dictionary — move it outside the "
+            "<dict>...</dict> tag (a boxed gloss type is fine; only hand-written <details> is refused)",
+        )
     text = render_action_spans(raw_content, source_for_warning)
     text = render_structural_divs(text, gloss_types)
     return text.strip()
@@ -375,7 +391,11 @@ def render_shloka_group(
         attrs = node.attrs_str
         type_key = gi.parse_attrs(attrs).get("data-type", "").strip()
         label = gi.commentary_label(type_key, attrs, gloss_types)
-        raw_inner = text[node.tag_end:node.inner_end]
+        # a hand-written <details> (e.g. a mermaid diagram) is dropped
+        # with its content, as in the full-chapter record
+        raw_inner, n_details = _DETAILS_BLOCK_RE.subn("", text[node.tag_end:node.inner_end])
+        if n_details and not raw_inner.strip():
+            continue  # the gloss was nothing but the dropped block — no empty label
         content = render_shloka_gloss_text(raw_inner)
         blocks.append(f"<b>{label}</b>\n<i>{content}</i>" if label else f"<i>{content}</i>")
         if type_key == "anvaya" and anvaya is None:

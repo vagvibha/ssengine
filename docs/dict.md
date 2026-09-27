@@ -79,7 +79,24 @@ The build fails if:
 - The self-closing form never displays. `display=` on it must be absent
   or `"False"`.
 - Nesting, an unclosed tag or a stray `</dict>` fails the build.
+- A hand-written `<details>` inside a `<dict>` entry fails the build.
+  (A `boxed:` gloss type is fine — see below.)
 - The tags themselves never reach the site.
+
+### Boxed glosses and `<details>`
+
+A gloss type with `boxed:` (see [site_config.md](site_config.md)) is
+boxed on the website only. In every dictionary output it's an ordinary
+gloss: `<b>label</b>` plus its content, with no `<details>` or
+`<summary>`.
+
+A `<details>` you write by hand (e.g. around a mermaid diagram) is:
+
+| Where | Result |
+|---|---|
+| inside a `<dict>` entry | build error |
+| inside a gloss in a shloka-format chapter | dropped with its content; a gloss left empty by that is skipped |
+| anywhere in a notes full-chapter record | dropped with its content |
 
 ### `<dictref/>` — a dictionary-only cross-reference
 
