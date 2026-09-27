@@ -272,7 +272,7 @@ BOOK_META_KEYS = {
 }
 BOOK_DICT_KEYS = {"folder": "str"}
 CHAPTER_META_KEYS = {
-    "chapter_name": "str", "chapter_display_style": "str", "full_chapter_label": "str",
+    "chapter_name": "str", "chapter_display_style": "str", "full_chapter_label": "str", "ignore": "bool",
     "default_shloka_type": "str", "default_class": "str", "shloka_toc": "bool", "dict": "map",
 }
 CHAPTER_DICT_KEYS = {
@@ -1024,6 +1024,11 @@ def discover_chapters(text: Text) -> list[Chapter]:
     dir_children = {d.name: d for d in text.dir.iterdir() if d.is_dir() and not d.name.startswith(".")}
 
     for name, d in dir_children.items():
+        chapter_meta = read_meta(d)  # optional meta.yaml/meta.yml inside the chapter dir (chapter_name, default_shloka_type, default_class, ...)
+        validate_chapter_meta(chapter_meta, find_meta_file(d) or d)
+        if chapter_meta.get("ignore"):
+            print(f"Skipping {d} (ignore: true in meta.yaml)")
+            continue
         sections = []
         for f in sorted(d.glob("*.md"), key=lambda f: f.stem):
             fm, _ = split_frontmatter(f.read_text(encoding="utf-8"))
@@ -1034,8 +1039,6 @@ def discover_chapters(text: Text) -> list[Chapter]:
         if not sections:
             warn(f"chapter directory {d} contains no .md sections — skipping")
             continue
-        chapter_meta = read_meta(d)  # optional meta.yaml/meta.yml inside the chapter dir (chapter_name, default_shloka_type, default_class, ...)
-        validate_chapter_meta(chapter_meta, find_meta_file(d) or d)
         chapters.append(Chapter(text, name, sections, chapter_meta))
 
     for f in text.dir.glob("*.md"):
@@ -1045,6 +1048,10 @@ def discover_chapters(text: Text) -> list[Chapter]:
                 f"and will be IGNORED — the directory's sections are used instead. "
                 f"This file should be removed from the source."
             )
+            continue
+        fm, _ = split_frontmatter(f.read_text(encoding="utf-8"))
+        if fm.get("ignore"):
+            print(f"Skipping {f} (ignore: true in frontmatter)")
             continue
         chapters.append(Chapter(text, f.stem, [f]))
 

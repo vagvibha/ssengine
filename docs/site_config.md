@@ -146,6 +146,7 @@ one-item list), **mapping**.
 | `chapter_name` | text | Nav label (else `chapter_type`/section word + number). |
 | `chapter_display_style` | text | `full_chapter` (default: one page) or `sections` (a landing page plus a page per `.md` file). |
 | `full_chapter_label` | text | `sections` mode only: also generate a whole-chapter page, listed under this label. |
+| `ignore` | bool | Skip this chapter entirely (site and dictionary). |
 | `default_shloka_type` | text | Overrides the book's. |
 | `default_class` | text | Overrides the book's. |
 | `shloka_toc` | bool | Overrides the book's. |
@@ -190,7 +191,7 @@ a typo here is silently ignored.
 | Key | Kind | Meaning |
 |---|---|---|
 | `title` | text | `sections` mode only: the section's name on the chapter's landing page and in back-links from topic pages. Default: the filename. |
-| `ignore` | bool | Skip this section file entirely. Only works inside a chapter directory — a single-file `<chapter>.md` is always built. |
+| `ignore` | bool | Skip this section file entirely. In a single-file `<chapter>.md`, skips the whole chapter. |
 | `chandas` | text | Default meter for every shloka in the file (a shloka's own `data-chandas=` wins). |
 | `alankara` | list | Default figure(s) for every shloka in the file (a shloka's own `data-alankara=` wins). |
 | `dict` | mapping | `syns`, `skip`: shloka-format dictionary defaults. See [dict.md](dict.md#shloka-format). |
