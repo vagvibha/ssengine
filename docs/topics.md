@@ -45,7 +45,7 @@ short:
 | File | Keys |
 |---|---|
 | category `meta.yaml` | `title` (required), `order`, `expanded_by_default` |
-| topic frontmatter / multi-file topic `meta.yaml` | `title` (required), `order`, `definitions_heading`, `term_column_heading`, `definition_column_heading`, `source_column_heading` — strictly checked |
+| topic frontmatter / multi-file topic `meta.yaml` | `title` (required), `order`, `definitions_heading`, `term_column_heading`, `definition_column_heading`, `source_column_heading`, `references_heading` — strictly checked |
 | a file inside a multi-file topic | `order` |
 
 A multi-file topic is for a subject too long for one file. Its files are
@@ -70,7 +70,9 @@ containing, in order:
 5. **सन्दर्भाः**: only if at least one reference names this topic. One
    line per reference: `[context](link to the passage) — text — chapter`.
    References appear in build order (sections, then texts, in their
-   normal order).
+   normal order). The heading is `labels: references_heading` in
+   `site_config.yaml`; a topic can override it with its own
+   `references_heading`.
 
 The topics listing page (`docs/topics/index.md`) lists every category in
 `order`. A category with `expanded_by_default: false` is collapsed behind

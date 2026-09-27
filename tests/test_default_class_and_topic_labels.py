@@ -137,6 +137,21 @@ def test_topic_heading_overrides(tmp_path):
     assert "<th>SITE-TERM</th>" in three and "## परिभाषाः" in three
 
 
+def test_topic_references_heading_override(tmp_path):
+    chapter = (
+        '<topic name="एकम्" context="c1">x</topic>\n\n'
+        '<topic name="द्वे" context="c2">y</topic>\n\n'
+        '<topic name="त्रीणि" context="c3">z</topic>\n'
+    )
+    site = topic_site(tmp_path, {"references_heading": "उल्लेखाः"}, {"references_heading": "स्थानानि"})
+    (site / "kavya/padya/ka/01/01.md").write_text(chapter, encoding="utf-8")
+    r = run_script(site, "generate_indices.py")
+    assert r.returncode == 0, r.stderr
+    assert "## उल्लेखाः" in topic_page(site, "one")
+    assert "## स्थानानि" in topic_page(site, "two")
+    assert "## सन्दर्भाः" in topic_page(site, "three")  # not overridden -> default
+
+
 @pytest.mark.parametrize("where", ["single", "multi"])
 def test_unknown_topic_key_is_an_error(tmp_path, where):
     bad = {"term_colum_heading": "x"}

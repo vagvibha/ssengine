@@ -115,6 +115,7 @@ one-item list), **mapping**.
 | `hideable` | bool | Member of the page's Show/Hide group. Default true. |
 | `hidden_by_default` | bool | Starts hidden on page load. |
 | `boxed` | text | `open` or `closed`: the shorthand tag's content (`<tika>…</tika>`) is put in a collapsible `<details>` box inside the gloss, starting expanded (`open`) or collapsed (`closed`). The type's label becomes the box's `<summary>` instead of being printed before the content. Show/Hide hides the whole box. Shorthand only — a hand-written `<div>` of this type isn't boxed. Website only — the dictionary shows a boxed gloss like any other (label + content). |
+| `exclude_site` | bool | Leave this type out of the website: every div of it (shorthand or hand-written) is removed with its content, including anything nested inside it, before topic tags, `<dict>` tags and shlokas are processed. Default false. Website only — the dictionary is unaffected (use `dict.tags_keep` there). Setting it on the type a chapter uses as `default_class` is an error. To exclude a type in one book only, give that book its own full `gloss_types:` entry. |
 
 ---
 
@@ -172,6 +173,7 @@ take exactly these keys; anything else is an error.
 | `term_column_heading` | text | Same, for the table's term column. |
 | `definition_column_heading` | text | Same, for the definition column. |
 | `source_column_heading` | text | Same, for the source column. |
+| `references_heading` | text | This page's सन्दर्भाः heading (the list of places the topic is referenced from). |
 
 Each heading falls back to `site_config.yaml`'s `labels:`, then the
 built-in default.
@@ -220,7 +222,8 @@ at that level.
 | Meter / figure | — | — | — | `chandas` / `alankara` | `data-chandas=` / `data-alankara=` |
 | Chapter nav label | `default_chapter_word` → section's `default_chapter_word` | `chapter_type` (+ number) | `chapter_name` | — | — |
 | Gloss type config | `gloss_types.yaml` | `gloss_types` (replaces the whole entry), `gloss_labels` (label only) | — | — | `toggle-hide="true"` / `"false"` |
-| Definitions-table headings | `labels:` | — | — | — | topic frontmatter / `meta.yaml` |
+| Topic-page headings (definitions table, सन्दर्भाः) | `labels:` | — | — | — | topic frontmatter / `meta.yaml` |
+| Gloss type left out of the site | `gloss_types.yaml` `exclude_site` | `gloss_types` (whole entry) | — | — | — |
 
 Two details:
 - A book's `gloss_types:` entry replaces the site's entry for that type

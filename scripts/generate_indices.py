@@ -256,6 +256,7 @@ GLOSS_TYPES_FILE_KEYS = {"supported_css_styles": "list", "types": "maplist"}
 GLOSS_TYPE_ENTRY_KEYS = {
     "data_type": "str", "label": "str", "label_from_attr": "str", "class": "str",
     "css_style": "str", "hideable": "bool", "hidden_by_default": "bool", "boxed": "str",
+    "exclude_site": "bool",
 }
 # `boxed:` values — see expand_gloss_shorthand.
 BOXED_VALUES = ("open", "closed")
@@ -280,10 +281,11 @@ CHAPTER_DICT_KEYS = {
 }
 TOPIC_CATEGORY_META_KEYS = {"title": "str", "order": "str", "expanded_by_default": "bool"}
 # Per-topic overrides of the matching site_config.yaml labels: keys, for
-# the auto-generated परिभाषाः table on that topic's page (see
-# build_topic_definitions_table / render_ref_page).
+# the auto-generated परिभाषाः table and सन्दर्भाः list on that topic's page
+# (see build_topic_definitions_table / render_ref_page).
 TOPIC_LABEL_OVERRIDE_KEYS = (
     "definitions_heading", "term_column_heading", "definition_column_heading", "source_column_heading",
+    "references_heading",
 )
 # A single-file topic's frontmatter and a multi-file topic's meta.yaml
 # carry exactly the same keys.
@@ -2151,6 +2153,49 @@ def expand_gloss_shorthand(
     return apply_splices(text, splices) if splices else text
 
 
+def excluded_gloss_types(gloss_types: dict[str, dict]) -> set[str]:
+    """data_types marked `exclude_site: true` — never published on the
+    website (the dictionary build ignores this key)."""
+    return {k for k, cfg in gloss_types.items() if cfg.get("exclude_site")}
+
+
+def strip_excluded_glosses(text: str, gloss_types: dict[str, dict]) -> str:
+    """Remove every gloss-routed div whose data-type is marked
+    `exclude_site: true`, together with its content (anything nested
+    inside it goes too). Runs right after expand_gloss_shorthand, so a
+    shorthand tag, a boxed type and a hand-written <div> are all covered,
+    and before topic/dict/shloka processing, so nothing inside a removed
+    gloss registers a back-reference or a definition. Website only."""
+    excluded = excluded_gloss_types(gloss_types)
+    if not excluded:
+        return text
+    gloss_classes = recognized_div_classes(gloss_types)
+    splices: list[tuple[int, int, str]] = []
+
+    def walk(nodes: list[DivNode]) -> None:
+        for n in nodes:
+            if (n.base_cls in gloss_classes
+                    and parse_attrs(n.attrs_str).get("data-type", "").strip().lower() in excluded):
+                splices.append((n.start, n.end, ""))
+            else:
+                walk(n.children)
+
+    walk(parse_divs(text))
+    return apply_splices(text, splices) if splices else text
+
+
+def check_default_class_published(chapter: "Chapter", where: object) -> None:
+    """A chapter whose default_class is an excluded gloss type would have
+    every run of untagged text silently vanish from the site — almost
+    certainly a mistake, so fail the build instead."""
+    _, type_key = resolve_default_class(chapter.default_class, chapter.text.effective_gloss_types)
+    if type_key and type_key in excluded_gloss_types(chapter.text.effective_gloss_types):
+        raise ConfigError(
+            f"{where}: default_class '{type_key}' is a gloss type with exclude_site: true — all untagged "
+            f"text in this chapter would be left out of the site. Change default_class, or drop "
+            f"exclude_site for '{type_key}' in this book.")
+
+
 def process_content_sections(
     body: str, default_class: str, gloss_types: dict[str, dict], source_for_warning: object = "",
 ) -> str:
@@ -2654,6 +2699,7 @@ def render_chapter_full(
         body = expand_gloss_shorthand(
             body, chapter.text.effective_gloss_types, source_for_warning=section, warn_enabled=primary,
         )
+        body = strip_excluded_glosses(body, chapter.text.effective_gloss_types)
         body, _dict_captures = dict_extract.extract_dict_and_ref_tags(body, source_for_warning=section)
         anchor = f"sec{i+1}"
         body, topic_tag_counter = process_topic_tags(
@@ -2765,6 +2811,7 @@ def render_chapter_sections(
         raw = section.read_text(encoding="utf-8")
         fm, body = split_frontmatter(raw)
         body = expand_gloss_shorthand(body, chapter.text.effective_gloss_types, source_for_warning=section)
+        body = strip_excluded_glosses(body, chapter.text.effective_gloss_types)
         body, _dict_captures = dict_extract.extract_dict_and_ref_tags(body, source_for_warning=section)
         display_title = section_display_title(fm, section.stem)
         section_rel_file = chapter.section_rel_out_file(section)
@@ -2838,6 +2885,7 @@ def process_chapter(
     """Renders and writes everything for one chapter, dispatching on
     Chapter.display_style — the single entry point main() calls per
     chapter, so it doesn't need to know which render path applies."""
+    check_default_class_published(chapter, chapter.text.dir / chapter.slug)
     if chapter.display_style == "sections":
         render_chapter_sections(chapter, topics, chandas, alankaras, definitions)
         return
@@ -2872,7 +2920,7 @@ def render_ref_page(page: RefPage, definitions: list[TopicDefinition]) -> str:
         parts.append(table_html)
     if page.references:
         parts.append("")
-        parts.append(f"## {site_label('references_heading', 'सन्दर्भाः')}")
+        parts.append(f"## {page_label(page.frontmatter, 'references_heading', 'सन्दर्भाः')}")
         parts.append("")
         for ref in page.references:
             link = rel_link(page.rel_out_file, ref.page_rel_out_file) + f"#{ref.anchor}"
