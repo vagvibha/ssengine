@@ -288,9 +288,18 @@ TOPIC_LABEL_OVERRIDE_KEYS = (
     "references_heading",
 )
 # A single-file topic's frontmatter and a multi-file topic's meta.yaml
-# carry exactly the same keys.
+# carry the same keys, plus topic_display_style for a multi-file topic
+# only (see render_ref_page_sections).
 TOPIC_META_KEYS = {"title": "str", "order": "str", **{k: "str" for k in TOPIC_LABEL_OVERRIDE_KEYS}}
-TOPIC_DIR_META_KEYS = TOPIC_META_KEYS
+TOPIC_DIR_META_KEYS = {**TOPIC_META_KEYS, "topic_display_style": "str"}
+TOPIC_DISPLAY_STYLES = ("single_page", "sections")
+# Output page names a sections-mode topic uses for its own generated pages
+# (<slug>/_definitions.md, <slug>/_references.md) — a part file can't
+# share them. `index` is reserved too: <slug>/index.md would land at the
+# same URL as the topic's landing page <slug>.md.
+TOPIC_DEFINITIONS_STEM = "_definitions"
+TOPIC_REFERENCES_STEM = "_references"
+TOPIC_RESERVED_PART_STEMS = (TOPIC_DEFINITIONS_STEM, TOPIC_REFERENCES_STEM, "index")
 
 
 def check_keys(data: object, schema: dict[str, str], where: object) -> dict:
@@ -1081,8 +1090,19 @@ class NavListEntry:
         return title_order_sort_key(self.frontmatter, self.title, self._source)
 
 
+class TopicPart:
+    """One .md file of a multi-file topic, kept separate so a
+    `topic_display_style: sections` topic can give it its own page."""
+    def __init__(self, path: Path, frontmatter: dict, body: str):
+        self.path = path
+        self.frontmatter = frontmatter
+        self.body = body
+        self.title = section_display_title(frontmatter, path.stem)
+
+
 class RefPage:
-    def __init__(self, kind: str, slug: str, path: Path, frontmatter: dict, body: str, rel_dir: str):
+    def __init__(self, kind: str, slug: str, path: Path, frontmatter: dict, body: str, rel_dir: str,
+                 parts: list[TopicPart] | None = None):
         self.kind = kind  # "topic"
         self.slug = slug
         self.path = path
@@ -1092,14 +1112,38 @@ class RefPage:
         self.title = str(frontmatter.get("title", slug)).strip()
         self.references: list["Reference"] = []  # filled in during the scan
         self.category: "TopicCategory | None" = None  # filled in by main(), after discover_topic_categories
+        self.parts: list[TopicPart] = parts or []  # multi-file topics only, in order
 
     @property
     def sort_key(self):
         return title_order_sort_key(self.frontmatter, self.title, self.path)
 
     @property
+    def display_style(self) -> str:
+        """`topic_display_style:` in a multi-file topic's meta.yaml —
+        "single_page" (default: every part joined onto one page) or
+        "sections" (a landing page linking to one page per part, plus
+        separate definitions/references pages). Validated in
+        discover_multifile_topic; a single-file topic can't set it."""
+        return str(self.frontmatter.get("topic_display_style") or "").strip() or "single_page"
+
+    @property
     def rel_out_file(self) -> str:
+        """The topic's own page — in sections mode, its landing page.
+        Kept at the same path in both modes, so links to the topic
+        (topic-tag jump links, nav, xref()) never depend on the mode."""
         return f"{self.rel_dir}/{self.slug}.md"
+
+    def part_rel_out_file(self, part: TopicPart) -> str:
+        return f"{self.rel_dir}/{self.slug}/{part.path.stem}.md"
+
+    @property
+    def definitions_rel_out_file(self) -> str:
+        return f"{self.rel_dir}/{self.slug}/{TOPIC_DEFINITIONS_STEM}.md"
+
+    @property
+    def references_rel_out_file(self) -> str:
+        return f"{self.rel_dir}/{self.slug}/{TOPIC_REFERENCES_STEM}.md"
 
     @property
     def out_file(self) -> Path:
@@ -1196,7 +1240,7 @@ def discover_topic_categories(topics_src: Path, topics_rel_dir: str) -> list[Top
     return categories
 
 
-def discover_multifile_topic(d: Path) -> tuple[dict, str]:
+def discover_multifile_topic(d: Path) -> tuple[dict, str, list[TopicPart]]:
     """A `topics/<category>/<slug>/` directory: a complex topic authored
     as several .md files instead of one. `d/meta.yaml` carries this
     topic's own `title:` (and `order:`, for its position among OTHER
@@ -1207,10 +1251,19 @@ def discover_multifile_topic(d: Path) -> tuple[dict, str]:
     title_order_sort_key), and all of them are concatenated in that order
     into one combined body, exactly as if authored as a single file — no
     headings/separators are injected between them; if the source files
-    want section headings, they already have their own '#'/'##' lines."""
+    want section headings, they already have their own '#'/'##' lines.
+
+    With `topic_display_style: sections` each file instead becomes its
+    own page (see render_ref_page_sections), so the files are also
+    returned individually, as TopicParts."""
     meta = read_meta(d)
-    check_keys(meta, TOPIC_DIR_META_KEYS, find_meta_file(d) or d)
+    where = find_meta_file(d) or d
+    check_keys(meta, TOPIC_DIR_META_KEYS, where)
+    style = str(meta.get("topic_display_style") or "").strip()
+    if style and style not in TOPIC_DISPLAY_STYLES:
+        raise ConfigError(f"{where}: unknown topic_display_style '{style}' — expected 'single_page' or 'sections'")
     parts = []
+    topic_parts: list[TopicPart] = []
     children = sorted(
         d.glob("*.md"),
         key=lambda f: title_order_sort_key(split_frontmatter(f.read_text(encoding="utf-8"))[0], f.stem, f),
@@ -1218,9 +1271,14 @@ def discover_multifile_topic(d: Path) -> tuple[dict, str]:
     for f in children:
         fm, body = split_frontmatter(f.read_text(encoding="utf-8"))
         parts.append(body.strip())
+        topic_parts.append(TopicPart(f, fm, body))
+        if style == "sections" and f.stem in TOPIC_RESERVED_PART_STEMS:
+            raise ConfigError(
+                f"{f}: '{f.name}' can't be used as a part of a topic_display_style: sections topic — "
+                f"the names {', '.join(s + '.md' for s in TOPIC_RESERVED_PART_STEMS)} are reserved. Rename it.")
     if not children:
         warn(f"{d} is a topic directory with no .md files inside — it will render empty")
-    return meta, "\n\n".join(parts)
+    return meta, "\n\n".join(parts), topic_parts
 
 
 def discover_ref_pages(kind: str, folder: Path, rel_dir: str, exclude: set[str] = frozenset()) -> dict[str, RefPage]:
@@ -1231,8 +1289,9 @@ def discover_ref_pages(kind: str, folder: Path, rel_dir: str, exclude: set[str] 
     for p in entries:
         if p.name in exclude:
             continue
+        parts: list[TopicPart] = []
         if p.is_dir():
-            fm, body = discover_multifile_topic(p)
+            fm, body, parts = discover_multifile_topic(p)
             f = p  # for warning messages / sort_key source
         elif p.suffix == ".md":
             text = p.read_text(encoding="utf-8")
@@ -1248,7 +1307,7 @@ def discover_ref_pages(kind: str, folder: Path, rel_dir: str, exclude: set[str] 
         if title in pages:
             warn(f"duplicate title '{title}' between {pages[title].path} and {f}")
             continue
-        pages[title] = RefPage(kind, p.stem, f, fm, body, rel_dir)
+        pages[title] = RefPage(kind, p.stem, f, fm, body, rel_dir, parts)
     return pages
 
 
@@ -2929,11 +2988,78 @@ def render_ref_page(page: RefPage, definitions: list[TopicDefinition]) -> str:
         parts.append("")
         parts.append(f"## {page_label(page.frontmatter, 'references_heading', 'सन्दर्भाः')}")
         parts.append("")
-        for ref in page.references:
-            link = rel_link(page.rel_out_file, ref.page_rel_out_file) + f"#{ref.anchor}"
-            parts.append(f"- [{ref.preview}]({link}) — {ref.label}")
+        parts.extend(topic_reference_lines(page, page.rel_out_file))
     parts.append("")
     return "\n".join(parts)
+
+
+def topic_reference_lines(page: RefPage, current_rel_file: str) -> list[str]:
+    """The सन्दर्भाः list items for `page`, linked relative to whichever
+    output page they're written onto."""
+    lines = []
+    for ref in page.references:
+        link = rel_link(current_rel_file, ref.page_rel_out_file) + f"#{ref.anchor}"
+        lines.append(f"- [{ref.preview}]({link}) — {ref.label}")
+    return lines
+
+
+def render_ref_page_sections(page: RefPage, definitions: list[TopicDefinition]) -> None:
+    """`topic_display_style: sections` (multi-file topics only). Writes:
+      - the landing page at page.rel_out_file (same path as single_page
+        mode): the title, a list of the parts, then — each only if it
+        has entries — links to the परिभाषाः and सन्दर्भाः pages;
+      - one page per part at <slug>/<part stem>.md, with ⬆ to the
+        landing page and ←/→ between parts only;
+      - <slug>/_definitions.md and <slug>/_references.md, with ⬆ to
+        the landing page (not in the parts' ←/→ sequence).
+    A part page gets `# <topic> — <part title>` unless its body already
+    starts with its own `# ` heading; the part title is its `title:`
+    frontmatter, else its filename."""
+    up_target = f"{TOPICS_CONFIG.dir}/index.md" if TOPICS_CONFIG else None
+    up_label = TOPICS_CONFIG.h1_label if TOPICS_CONFIG else None
+    landing = page.rel_out_file
+    defs_heading = page_label(page.frontmatter, "definitions_heading", "परिभाषाः")
+    refs_heading = page_label(page.frontmatter, "references_heading", "सन्दर्भाः")
+
+    for i, part in enumerate(page.parts):
+        rel_file = page.part_rel_out_file(part)
+        prev_p = page.parts[i - 1] if i > 0 else None
+        next_p = page.parts[i + 1] if i < len(page.parts) - 1 else None
+        lines = [render_topnav(
+            rel_file, landing, page.title,
+            prev_target_rel_file=page.part_rel_out_file(prev_p) if prev_p else None,
+            next_target_rel_file=page.part_rel_out_file(next_p) if next_p else None,
+        )]
+        body = part.body.strip()
+        if not H1_RE.match(body):
+            lines += [f"# {page.title} — {part.title}", ""]
+        lines += [body, ""]
+        write_md(DOCS / rel_file, "\n".join(lines))
+
+    extras: list[tuple[str, str]] = []  # (label, rel_out_file) for the landing page
+    table_html = build_topic_definitions_table(page.definitions_rel_out_file, definitions, page.frontmatter)
+    if table_html:
+        rel_file = page.definitions_rel_out_file
+        lines = [render_topnav(rel_file, landing, page.title), f"# {page.title} — {defs_heading}", "",
+                 table_html, ""]
+        write_md(DOCS / rel_file, "\n".join(lines))
+        extras.append((defs_heading, rel_file))
+    if page.references:
+        rel_file = page.references_rel_out_file
+        lines = [render_topnav(rel_file, landing, page.title), f"# {page.title} — {refs_heading}", ""]
+        lines += topic_reference_lines(page, rel_file) + [""]
+        write_md(DOCS / rel_file, "\n".join(lines))
+        extras.append((refs_heading, rel_file))
+
+    lines = [render_topnav(landing, up_target, up_label), f"# {page.title}", ""]
+    lines += [f"- [{part.title}]({rel_link(landing, page.part_rel_out_file(part))})" for part in page.parts]
+    if extras:
+        # a second list, not more items of the first: the comment stops
+        # Markdown from merging two lists separated only by a blank line
+        lines += ["", "<!-- -->", ""]
+        lines += [f"- [{label}]({rel_link(landing, rel_file)})" for label, rel_file in extras]
+    lines.append("")
+    write_md(DOCS / landing, "\n".join(lines))
 
 
 # ---------------------------------------------------------------------------
@@ -3247,7 +3373,10 @@ def main():
 
     # --- topic pages: write with injected परिभाषाः table + सन्दर्भाः back-links
     for title, page in topics.items():
-        write_md(page.out_file, render_ref_page(page, definitions.get(title, [])))
+        if page.display_style == "sections":
+            render_ref_page_sections(page, definitions.get(title, []))
+        else:
+            write_md(page.out_file, render_ref_page(page, definitions.get(title, [])))
 
     # --- chandas/alankara glossary pages + their (nav-less) detail pages --
     if CHANDAS_ALANKARA_ENABLED:

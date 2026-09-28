@@ -175,6 +175,7 @@ take exactly these keys; anything else is an error.
 | `definition_column_heading` | text | Same, for the definition column. |
 | `source_column_heading` | text | Same, for the source column. |
 | `references_heading` | text | This page's सन्दर्भाः heading (the list of places the topic is referenced from). |
+| `topic_display_style` | text | Multi-file topic `meta.yaml` only: `single_page` (default: all parts on one page) or `sections` (a page per part, plus separate definitions and references pages). See [topics.md](topics.md#sections-mode). Anything else is an error. |
 
 Each heading falls back to `site_config.yaml`'s `labels:`, then the
 built-in default.
@@ -201,7 +202,9 @@ frontmatter, so `{{ page.meta.… }}` can't read these either — use
 `{% set name = "…" %}` in the body instead.
 
 **Files inside a multi-file topic directory** (`topics/<category>/<topic>/*.md`):
-`order` only (the order they're joined in; default: filename).
+`order` (the order they're joined in, or listed in `sections` mode;
+default: filename) and `title` (`sections` mode only: the part's name on
+the topic's landing page and in its page heading; default: filename).
 
 **`topics/chandas.md` / `topics/alankara.md`:** `title` (default
 `chandas` / `alankara`), `order`.

@@ -31,8 +31,8 @@ topics/
     meta.yaml                  title (required), order, expanded_by_default
     <topic>.md                 a single-file topic, OR:
     <topic>/                   a multi-file topic:
-      meta.yaml                the topic's keys (title, order, …)
-      *.md                     joined in their own order: (default: filename)
+      meta.yaml                the topic's keys (title, order, topic_display_style, …)
+      *.md                     the parts, in their own order: (default: filename)
   chandas.md, alankara.md      glossaries (only with chandas_alankara: true)
 ```
 
@@ -46,11 +46,14 @@ short:
 |---|---|
 | category `meta.yaml` | `title` (required), `order`, `expanded_by_default` |
 | topic frontmatter / multi-file topic `meta.yaml` | `title` (required), `order`, `definitions_heading`, `term_column_heading`, `definition_column_heading`, `source_column_heading`, `references_heading` — strictly checked |
-| a file inside a multi-file topic | `order` |
+| multi-file topic `meta.yaml` only | `topic_display_style`: `single_page` (default) or `sections` — strictly checked |
+| a file inside a multi-file topic | `order`, `title` (`sections` mode) |
 
-A multi-file topic is for a subject too long for one file. Its files are
-joined into one page with nothing added between them, exactly as if they
-were one file, so give each its own `##` heading if you want one.
+A multi-file topic is for a subject too long for one file. By default
+(`topic_display_style: single_page`) its files are joined into one page
+with nothing added between them, exactly as if they were one file, so
+give each its own `##` heading if you want one. With `sections`, each
+file gets its own page instead — see [Sections mode](#sections-mode).
 
 ## What a topic page shows
 
@@ -73,6 +76,26 @@ containing, in order:
    normal order). The heading is `labels: references_heading` in
    `site_config.yaml`; a topic can override it with its own
    `references_heading`.
+
+### Sections mode
+
+`topic_display_style: sections` in a multi-file topic's `meta.yaml`
+splits it across several pages. For `topics/advaita/maya/` with parts
+`01.md` and `02.md`:
+
+| Page | Contents |
+|---|---|
+| `docs/topics/advaita/maya.md` | The landing page: nav bar, `# <title>`, a list of the parts, then a second list linking to the परिभाषाः and सन्दर्भाः pages (each only if it has entries). Same path as a single-page topic, so topic tags, nav and `xref("topics/advaita/maya.md")` link here in either mode. |
+| `docs/topics/advaita/maya/01.md`, `…/02.md` | One page per part: ⬆ to the landing page and ←/→ between parts. `# <topic title> — <part title>` unless the part starts with its own `# ` heading. The part title is its `title:` frontmatter, else its filename. |
+| `docs/topics/advaita/maya/_definitions.md` | The परिभाषाः table, with ⬆ to the landing page. |
+| `docs/topics/advaita/maya/_references.md` | The सन्दर्भाः list, with ⬆ to the landing page. |
+
+The definitions and references pages aren't in the parts' ←/→ sequence;
+they're reached from the landing page. The topic has one nav entry, its
+landing page. A part file named `_definitions.md`, `_references.md` or
+`index.md` is a build error in sections mode. To link to a passage
+inside a part, `xref()` the part's own page, e.g.
+`xref("topics/advaita/maya/02.md")`.
 
 The topics listing page (`docs/topics/index.md`) lists every category in
 `order`. A category with `expanded_by_default: false` is collapsed behind
