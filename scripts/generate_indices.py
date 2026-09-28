@@ -105,7 +105,10 @@ untouched Devanagari Markdown content. The chandas/alankara glossary
 those tables are small, hand-authored, well-formed HTML — and a site
 that never sets chandas_alankara: true never needs the dependency at all.
 
-Layout expected on disk:
+Layout expected on disk. All of it lives under `content_root:` from
+site_config.yaml (e.g. "contents/"), or directly at the repo root when
+that key is unset; generated output (docs/, mkdocs.yml, dict/) always
+stays at the repo root:
 
     <section>/                 e.g. shastra/, kavya/, advaita/
         meta.yaml               (optional, currently unused by the script
@@ -234,7 +237,8 @@ class ConfigError(ValueError):
 #   "list" a list, or a single scalar (treated as a one-item list).
 #   "map" / "maplist" / "any"  checked separately (or not at all).
 SITE_CONFIG_KEYS = {
-    "site_name": "str", "google_analytics_property": "str", "theme": "map", "labels": "map",
+    "site_name": "str", "google_analytics_property": "str", "content_root": "str",
+    "theme": "map", "labels": "map",
     "topics": "map", "default_chapter_word": "str", "maintain_shloka_linebreak": "bool",
     "dictionaries": "maplist", "content_sections": "maplist",
 }
@@ -379,6 +383,33 @@ validate_site_config(SITE_CONFIG, SITE_CONFIG_PATH)
 if not SITE_CONFIG.get("content_sections"):
     warn(f"{SITE_CONFIG_PATH} has no content_sections: — nothing will be built")
 
+
+def resolve_content_root(cfg: dict, where: object) -> Path:
+    """`content_root:` (optional) — the directory, relative to the repo
+    root, that every content section, the topics area and assets/ are
+    read FROM (e.g. "contents", so a site can keep all authored content
+    under one folder). It only moves the sources: output paths under
+    docs/, page URLs, the nav and dict/ are unchanged, since those are
+    all computed from each section's/topics' own `dir:` alone. Omitted
+    or empty = the repo root itself (the original layout)."""
+    raw = str(cfg.get("content_root") or "").strip().strip("/")
+    if not raw or raw == ".":
+        return ROOT
+    rel = Path(raw)
+    if rel.is_absolute() or ".." in rel.parts:
+        raise ConfigError(f"{where}: content_root {raw!r} must be a path inside the repo, "
+                          f"relative to the repo root (e.g. \"contents\")")
+    if rel.parts[0] in ("docs", "scripts", "dict", "site"):
+        raise ConfigError(f"{where}: content_root {raw!r} can't be inside {rel.parts[0]}/ — "
+                          f"that directory is generated or holds the engine")
+    root = ROOT / rel
+    if not root.is_dir():
+        raise ConfigError(f"{where}: content_root {raw!r} does not exist ({root})")
+    return root
+
+
+CONTENT_ROOT = resolve_content_root(SITE_CONFIG, SITE_CONFIG_PATH)
+
 # UI strings shown by the generated site that aren't tied to any one
 # section/text (those go through SectionConfig/Text instead) — see
 # site_config.yaml's labels: block for the full list and what each
@@ -444,7 +475,7 @@ class SectionConfig:
 
     @property
     def src(self) -> Path:
-        return ROOT / self.dir
+        return CONTENT_ROOT / self.dir
 
     @property
     def out_dir(self) -> Path:
@@ -479,7 +510,7 @@ class TopicsConfig:
 
     @property
     def src(self) -> Path:
-        return ROOT / self.dir
+        return CONTENT_ROOT / self.dir
 
     @property
     def out_dir(self) -> Path:
@@ -2452,7 +2483,7 @@ def render_topnav(
 # Output helpers
 # ---------------------------------------------------------------------------
 
-ASSETS_SRC = ROOT / "assets"
+ASSETS_SRC = CONTENT_ROOT / "assets"
 ASSETS_OUT = DOCS / "assets"
 
 
@@ -2471,7 +2502,7 @@ def clean_output():
 
 
 def copy_assets() -> int:
-    """Mirrors `assets/` (repo root — audio/*.mp3 today, anything else
+    """Mirrors `assets/` (under content_root — audio/*.mp3 today, anything else
     later) into `docs/assets/`, so MkDocs serves it as static files.
     Unlike everything else this script writes, these files are never
     parsed as Markdown or linked from nav/home cards on their own — they

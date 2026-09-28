@@ -12,6 +12,7 @@ and the `<topic>` tag are in [topics.md](topics.md).
     site_config.yaml           site-wide settings (below)
     gloss_types.yaml           gloss/commentary types (below)
     ssengine/                  this engine (git submodule)
+  [<content_root>/]            optional wrapper for everything below, down to assets/
   <section>/                   one per content_sections: entry, e.g. kavya/
     <group>/                   one per text_groups: entry (texts/ if none are declared)
       <book>/
@@ -23,6 +24,11 @@ and the `<topic>` tag are in [topics.md](topics.md).
   topics/                      the topics area — see topics.md
   assets/                      copied verbatim to docs/assets/
 ```
+
+With `content_root: contents` in `site_config.yaml`, the sections,
+`topics/` and `assets/` all move under `contents/`. Generated output
+(`docs/`, `mkdocs.yml`, `dict/`) stays at the repo root, and page URLs
+don't change: they come from each section's `dir:` alone.
 
 A `meta.yaml` directly inside `<section>/` is not read. Section-level
 display settings live in `site_config.yaml`'s `content_sections:`. Chapters
@@ -63,6 +69,7 @@ one-item list), **mapping**.
 |---|---|---|
 | `site_name` | text | Site title in `mkdocs.yml`. |
 | `google_analytics_property` | text | GA4 id (`G-…`). Omit for no analytics. |
+| `content_root` | text | Folder, relative to the repo root, holding all content sections, `topics/` and `assets/` (e.g. `contents`). Omit to keep them at the repo root. Must exist; can't be `docs`, `scripts`, `dict` or `site`. Doesn't affect URLs. |
 | `theme` | mapping | `primary`, `accent`: Material colours. `language`: Material's UI language code (e.g. `sa`). |
 | `labels` | mapping | UI strings the engine writes (see below). Any label left out keeps its default. |
 | `topics` | mapping | The topics area (see below). Omit if the site has no topics. |
@@ -80,7 +87,7 @@ one-item list), **mapping**.
 
 | Key | Kind | Meaning |
 |---|---|---|
-| `dir` | text | Repo-root directory holding topic categories (default `topics`). |
+| `dir` | text | Directory under the content root holding topic categories (default `topics`). |
 | `h1_label` | text | Heading and home-card/nav label for the topics area. |
 | `chandas_alankara` | bool | Turn on the meter/figure glossaries (`chandas.md`, `alankara.md`) and the छन्दः/अलङ्काराः columns. Default false. |
 
@@ -88,7 +95,7 @@ one-item list), **mapping**.
 
 | Key | Kind | Meaning |
 |---|---|---|
-| `dir` | text | Directory under the repo root, e.g. `kavya`. |
+| `dir` | text | Directory under the content root, e.g. `kavya`. Also the URL prefix. |
 | `h1_label` | text | Section heading and nav label. |
 | `default_chapter_word` | text | Chapter nav word for this section. |
 | `text_groups` | list of mappings | `{dir, h2_label}`: one sub-directory of texts per group, each under its own heading. |

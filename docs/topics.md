@@ -17,7 +17,7 @@ In `scripts/site_config.yaml`:
 
 ```yaml
 topics:
-  dir: topics          # repo-root directory (default: topics)
+  dir: topics          # under content_root (default: topics)
   h1_label: विषयाः     # heading, home card and nav label (default: विषयाः)
 ```
 
