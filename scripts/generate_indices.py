@@ -2092,11 +2092,18 @@ BOXED_MARKER_RE = re.compile(rf'\s{BOXED_MARKER_ATTR}="true"')
 
 
 def commentary_label(type_key: str, attrs: str, gloss_types: dict[str, dict]) -> str:
+    """The label shown before a commentary div's content. `label_from_attr`
+    (a per-instance attribute, e.g. tika's data-name) wins when that
+    instance sets it; otherwise the type's fixed `label` (if any) is the
+    fallback — so a type can have both, e.g. `<objection>` shows the
+    configured "पूर्वपक्षः" while `<objection label="...">` shows its own."""
     cfg = gloss_types.get(type_key)
     if not cfg:
         return ""
     if cfg.get("label_from_attr"):
-        return parse_attrs(attrs).get(cfg["label_from_attr"], "").strip()
+        own = parse_attrs(attrs).get(cfg["label_from_attr"], "").strip()
+        if own:
+            return own
     return str(cfg.get("label", "") or "").strip()
 
 

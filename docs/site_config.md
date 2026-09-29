@@ -118,7 +118,7 @@ one-item list), **mapping**.
 | `class` | text | Div class it's written under: `gloss` (default) or e.g. `vada`. |
 | `css_style` | text | One of `supported_css_styles`. Missing = a warning; not in the list = an error. |
 | `label` | text | Fixed label shown before the content. |
-| `label_from_attr` | text | Or: read the label from this div attribute (e.g. `data-name`). |
+| `label_from_attr` | text | Read the label from this div attribute (e.g. `data-name`). If the type also has `label`, that is the fallback for instances that don't set the attribute: with `label: "पूर्वपक्षः"` and `label_from_attr: label`, `<objection>` shows पूर्वपक्षः and `<objection label="कर्मकाण्डी">` shows कर्मकाण्डी. |
 | `hideable` | bool | Member of the page's Show/Hide group. Default true. |
 | `hidden_by_default` | bool | Starts hidden on page load. |
 | `boxed` | text | `open` or `closed`: the shorthand tag's content (`<tika>…</tika>`) is put in a collapsible `<details>` box inside the gloss, starting expanded (`open`) or collapsed (`closed`). The type's label becomes the box's `<summary>` instead of being printed before the content. Show/Hide hides the whole box. Shorthand only — a hand-written `<div>` of this type isn't boxed. Website only — the dictionary shows a boxed gloss like any other (label + content). |
