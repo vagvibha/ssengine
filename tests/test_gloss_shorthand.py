@@ -3,7 +3,19 @@ import generate_indices as gi
 
 
 def expand(text, gloss_types, **kw):
-    return gi.expand_gloss_shorthand(text, gloss_types, source_for_warning="t.md", **kw)
+    """Expansion with the internal closed-marker attribute taken out, so
+    these tests read as the div shape they check (the marker itself is
+    covered by test_every_generated_div_carries_closed_marker)."""
+    out = gi.expand_gloss_shorthand(text, gloss_types, source_for_warning="t.md", **kw)
+    return gi.CLOSED_MARKER_RE.sub("", out)
+
+
+def test_every_generated_div_carries_closed_marker(gloss_types):
+    out = gi.expand_gloss_shorthand("<tika data-name=\"X\">a <notes>n</notes></tika>", gloss_types)
+    assert out.count('data-sv-closed="true"') == 2
+    # a hand-written div is never marked
+    body = '<div class="gloss" data-type="notes">n</div>'
+    assert gi.expand_gloss_shorthand(body, gloss_types) == body
 
 
 def test_basic_expansion(gloss_types):

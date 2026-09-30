@@ -42,12 +42,14 @@ def test_shorthand_after_expansion_removed(excl):
 def test_other_types_kept(excl):
     body = '<anvaya>अन्वयः</anvaya><notes>n</notes><claim>c</claim>'
     out = strip(gi.expand_gloss_shorthand(body, excl), excl)
-    assert out == '<div class="gloss" data-type="anvaya">अन्वयः</div><div class="vada" data-type="claim">c</div>'
+    assert out == ('<div class="gloss" data-type="anvaya" data-sv-closed="true">अन्वयः</div>'
+                   '<div class="vada" data-type="claim" data-sv-closed="true">c</div>')
 
 
-# (A gloss-class div opening inside another gloss-class div is read by
-# parse_divs as an implicit close of the first — see its docstring — so
-# nesting is tested with divs of a different class.)
+# (A HAND-WRITTEN gloss-class div opening inside another gloss-class div
+# is read by parse_divs as an implicit close of the first — see its
+# docstring. Shorthand-generated divs nest properly: see
+# test_same_class_shorthand_nesting below.)
 
 def test_everything_nested_inside_an_excluded_div_goes(excl):
     body = gi.expand_gloss_shorthand('<notes>a <claim>c</claim> <div class="x">y</div></notes>b', excl)
@@ -57,7 +59,7 @@ def test_everything_nested_inside_an_excluded_div_goes(excl):
 def test_excluded_div_nested_in_kept_one(gloss_types):
     gloss_types["claim"] = {**gloss_types["claim"], "exclude_site": True}
     body = gi.expand_gloss_shorthand("<notes>a <claim>c</claim> b</notes>", gloss_types)
-    assert strip(body, gloss_types) == '<div class="gloss" data-type="notes">a  b</div>'
+    assert strip(body, gloss_types) == '<div class="gloss" data-type="notes" data-sv-closed="true">a  b</div>'
 
 
 def test_excluded_div_inside_structural_div(excl):
@@ -68,7 +70,14 @@ def test_excluded_div_inside_structural_div(excl):
 def test_excluded_type_on_non_default_class(gloss_types):
     gloss_types["claim"] = {**gloss_types["claim"], "exclude_site": True}
     body = gi.expand_gloss_shorthand("<claim>c</claim> <anvaya>x</anvaya>", gloss_types)
-    assert strip(body, gloss_types) == ' <div class="gloss" data-type="anvaya">x</div>'
+    assert strip(body, gloss_types) == ' <div class="gloss" data-type="anvaya" data-sv-closed="true">x</div>'
+
+
+def test_same_class_shorthand_nesting(excl):
+    """An excluded <notes> inside a kept <anvaya> (both class gloss) goes;
+    the anvaya around it stays whole."""
+    body = gi.expand_gloss_shorthand("<anvaya>a <notes>n</notes> b</anvaya>c", excl)
+    assert strip(body, excl) == '<div class="gloss" data-type="anvaya" data-sv-closed="true">a  b</div>c'
 
 
 def test_boxed_type_removed_with_its_box(excl):

@@ -675,6 +675,17 @@ def raw_html_href(from_rel_md_file: str, to_rel_md_file: str) -> str:
 # business touching.
 
 DIV_OPEN_RE = re.compile(r'<div\b((?:[^>"]|"[^"]*")*)>')
+
+# Put on every div expand_gloss_shorthand generates: a shorthand tag is
+# only ever expanded when its own close tag was found, so such a div is
+# known to be explicitly closed and is exempt from the "reopening the
+# same class implicitly closes the previous one" recovery rule — which is
+# what lets a <notes> nest inside a <bhashyam> (both class "gloss")
+# instead of ending it. Hand-written <div>s keep the old tolerance.
+# Never reaches the output (render_commentary_div re-emits only
+# data-type; the dictionary renderers drop all attributes).
+CLOSED_MARKER_ATTR = "data-sv-closed"
+CLOSED_MARKER_RE = re.compile(rf'\s{CLOSED_MARKER_ATTR}="true"')
 DIV_CLOSE_RE = re.compile(r'</div\s*>')
 CLASS_ATTR_RE = re.compile(r'class\s*=\s*"([^"]*)"')
 
@@ -704,7 +715,9 @@ def parse_divs(text: str) -> list[DivNode]:
     """Parse every <div class="..."> ... </div> in `text` into a forest of
     DivNode, tolerant of (a) real nesting to any depth and (b) a div of
     some class left unclosed right before a sibling *of the same class*
-    reopens (see module-level comment above)."""
+    reopens (see module-level comment above) — except a div generated
+    from a shorthand tag, which is always explicitly closed, so a
+    same-class div opening inside it nests (see CLOSED_MARKER_ATTR)."""
     tokens: list[tuple[int, int, str, str | None]] = []
     for m in DIV_OPEN_RE.finditer(text):
         tokens.append((m.start(), m.end(), "open", m.group(1)))
@@ -725,8 +738,10 @@ def parse_divs(text: str) -> list[DivNode]:
             cls_m = CLASS_ATTR_RE.search(attrs_str or "")
             cls = cls_m.group(1).strip() if cls_m else ""
             node = DivNode(cls, attrs_str or "", start, tag_end)
-            if stack and stack[-1].base_cls == node.base_cls and node.base_cls:
+            if (stack and stack[-1].base_cls == node.base_cls and node.base_cls
+                    and not CLOSED_MARKER_RE.search(stack[-1].attrs_str)):
                 # implicit close of the previous same-class div right here
+                # (never for a shorthand-generated div — see CLOSED_MARKER_ATTR)
                 prev = stack.pop()
                 finish(prev, start, start)
             stack.append(node)
@@ -2211,7 +2226,10 @@ def expand_gloss_shorthand(
 
     Shorthand tags may nest inside each other or inside/around a
     hand-written <div> (matched purely by tag name via a small stack, so
-    e.g. a <notes> inside a <tika> works). An open tag with no matching
+    e.g. a <notes> or <objection> inside a <bhashyam> works: each
+    generated div carries CLOSED_MARKER_ATTR so parse_divs nests rather
+    than implicitly closes it, and process_content_sections renders
+    nested gloss/vada divs on their own merit). An open tag with no matching
     close (or vice versa) warns and is left as literal, unexpanded text
     — this script's general policy is to never guess at malformed
     markup rather than silently drop or mispair it.
@@ -2244,11 +2262,13 @@ def expand_gloss_shorthand(
                 label = commentary_label(o_tag, o_attrs, gloss_types)
                 open_attr = " open" if boxed == "open" else ""
                 splices.append((o_start, o_end,
-                                f'<div class="{cls}" data-type="{o_tag}"{o_attrs} {BOXED_MARKER_ATTR}="true">\n'
+                                f'<div class="{cls}" data-type="{o_tag}"{o_attrs} {BOXED_MARKER_ATTR}="true" '
+                                f'{CLOSED_MARKER_ATTR}="true">\n'
                                 f'<details markdown="1"{open_attr}>\n<summary>{label}</summary>\n'))
                 splices.append((start, end, "\n</details>\n</div>"))
             else:
-                splices.append((o_start, o_end, f'<div class="{cls}" data-type="{o_tag}"{o_attrs}>'))
+                splices.append((o_start, o_end,
+                                f'<div class="{cls}" data-type="{o_tag}"{o_attrs} {CLOSED_MARKER_ATTR}="true">'))
                 splices.append((start, end, "</div>"))
     if warn_enabled:
         for tag, start, end, attrs in stack:
@@ -2434,9 +2454,23 @@ def process_content_sections(
                      f"'{type_key}' isn't declared in {GLOSS_TYPES_CONFIG_PATH.name} or this book's own "
                      f"meta.yaml gloss_types: (no label/hide/style will apply to it, only toggle-hide= if "
                      f"set explicitly)")
-            content = body[node.tag_end:node.inner_end]
-            handle_matched(node.cls, type_key, node.attrs_str, content, node.start, node.end)
-            # a matched gloss/vada div is opaque — don't recurse into it
+            handle_matched(node.cls, type_key, node.attrs_str,
+                           render_inside(node.tag_end, node.inner_end, node.children),
+                           node.start, node.end)
+
+    def render_inside(start: int, end: int, children: list[DivNode]) -> str:
+        """body[start:end] (a matched div's content) with its own nested
+        divs rendered first — a <notes>/<objection> inside a <bhashyam>
+        gets its own label/style/Show-Hide class exactly as it would at
+        top level. Never gap-wrapped in default_class: the text around
+        the nested divs belongs to the enclosing div already."""
+        if not children:
+            return body[start:end]
+        mark = len(splices)
+        visit(children, start, end, wrap=False)
+        local = splices[mark:]
+        del splices[mark:]  # applied into this content, not to `body` directly
+        return apply_splices(body[start:end], [(s - start, e - start, r) for s, e, r in local])
 
     visit(tree, 0, len(body))
     return apply_splices(body, splices)

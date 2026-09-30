@@ -45,8 +45,7 @@ def render_action_spans(text: str, source_for_warning: object = "") -> str:
 
 
 def render_structural_divs(text: str, gloss_types: dict) -> str:
-    """Two kinds of div, in one pass (they're always siblings, never
-    nested in each other, in every real example seen so far):
+    """Two kinds of div, in one pass:
       - a "shloka"-classed div is unwrapped to its bare inner verse text
         — never <i>-wrapped, exactly as the dedicated Shloka format
         treats verse text; only its structural <div> tag is noise here.
@@ -55,26 +54,34 @@ def render_structural_divs(text: str, gloss_types: dict) -> str:
         `<b>{label}</b><i>{content}</i>` (or just `<i>{content}</i>` if
         this type has no label) — content already has its own `.action`
         spans converted (render_notes_entry runs render_action_spans
-        over the WHOLE text first, before this).
-    A div nested inside either of the above (not seen in any real
-    content so far) is left unconverted, deliberately — rendering it
-    would need a nesting decision the spec doesn't make."""
-    tree = gi.parse_divs(text)
-    splices: list[tuple[int, int, str]] = []
+        over the WHOLE text first, before this). Gloss/vada divs nested
+        inside it (e.g. an <objection> inside a <bhashyam>) are rendered
+        the same way, in place, inside its <i>.
+    Any other div (a structural one such as dialog-block) is left
+    unconverted along with everything inside it, as before."""
     recognized = gi.recognized_div_classes(gloss_types)
 
-    for node in tree:
-        inner = text[node.tag_end:node.inner_end].strip()
-        if node.base_cls == "shloka":
-            splices.append((node.start, node.end, inner))
-        elif node.base_cls in recognized:
-            attrs = node.attrs_str
-            type_key = gi.parse_attrs(attrs).get("data-type", "").strip()
-            label = gi.commentary_label(type_key, attrs, gloss_types)
-            rendered = f"<b>{label}</b><i>{inner}</i>" if label else f"<i>{inner}</i>"
-            splices.append((node.start, node.end, rendered))
+    def render_span(start: int, end: int, nodes: list) -> str:
+        out, pos = [], start
+        for n in nodes:
+            out.append(text[pos:n.start])
+            out.append(render_node(n))
+            pos = n.end
+        out.append(text[pos:end])
+        return "".join(out)
 
-    return gi.apply_splices(text, splices) if splices else text
+    def render_node(n) -> str:
+        if n.base_cls == "shloka":
+            return text[n.tag_end:n.inner_end].strip()
+        if n.base_cls not in recognized:
+            return text[n.start:n.end]
+        inner = render_span(n.tag_end, n.inner_end, n.children).strip()
+        type_key = gi.parse_attrs(n.attrs_str).get("data-type", "").strip()
+        label = gi.commentary_label(type_key, n.attrs_str, gloss_types)
+        return f"<b>{label}</b><i>{inner}</i>" if label else f"<i>{inner}</i>"
+
+    tree = gi.parse_divs(text)
+    return render_span(0, len(text), tree) if tree else text
 
 
 # A hand-written <details> (the dictionary build never boxes a gloss — see

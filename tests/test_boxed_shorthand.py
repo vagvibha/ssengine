@@ -26,7 +26,7 @@ def test_open_box_with_label_from_attr(gloss_types):
     gt = boxed(gloss_types, "tika", "open")
     out = gi.expand_gloss_shorthand('<tika data-name="लोचनम्">T</tika>', gt)
     assert out == (
-        '<div class="gloss" data-type="tika" data-name="लोचनम्" data-sv-boxed="true">\n'
+        '<div class="gloss" data-type="tika" data-name="लोचनम्" data-sv-boxed="true" data-sv-closed="true">\n'
         '<details markdown="1" open>\n<summary>लोचनम्</summary>\nT\n</details>\n</div>'
     )
 
@@ -87,7 +87,7 @@ def test_bad_boxed_value_fails(tmp_path):
 def test_dictionary_build_never_boxes(gloss_types):
     gt = boxed(gloss_types, "tika", "open")
     out = gi.expand_gloss_shorthand('<tika data-name="X">T</tika>', gt, allow_boxing=False)
-    assert out == '<div class="gloss" data-type="tika" data-name="X">T</div>'
+    assert out == '<div class="gloss" data-type="tika" data-name="X" data-sv-closed="true">T</div>'
 
 
 def test_handwritten_details_in_dict_entry_is_an_error(gloss_types):

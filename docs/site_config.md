@@ -124,6 +124,36 @@ one-item list), **mapping**.
 | `boxed` | text | `open` or `closed`: the shorthand tag's content (`<tika>…</tika>`) is put in a collapsible `<details>` box inside the gloss, starting expanded (`open`) or collapsed (`closed`). The type's label becomes the box's `<summary>` instead of being printed before the content. Show/Hide hides the whole box. Shorthand only — a hand-written `<div>` of this type isn't boxed. Website only — the dictionary shows a boxed gloss like any other (label + content). |
 | `exclude_site` | bool | Leave this type out of the website: every div of it (shorthand or hand-written) is removed with its content, including anything nested inside it, before topic tags, `<dict>` tags and shlokas are processed. Default false. Website only — the dictionary is unaffected (use `dict.tags_keep` there). Setting it on the type a chapter uses as `default_class` is an error. To exclude a type in one book only, give that book its own full `gloss_types:` entry. |
 
+**Nesting.** Shorthand tags can nest, e.g. a bhashya holding its own
+vada and notes, followed by a tika with vada of its own:
+
+```html
+<bhashyam>
+…
+<objection>…</objection>
+<notes>…</notes>
+<refute>…</refute>
+…
+</bhashyam>
+
+<tika data-name="आनन्दगिरिः">
+…
+<objection label="बौद्धः">…</objection>
+<refute>…</refute>
+</tika>
+```
+
+Each nested tag gets its own label, style and Show/Hide membership, and
+stays inside its container (hiding a hideable container hides
+everything in it). `default_class` never wraps text inside a
+container: that text belongs to the container. Use shorthand tags for
+this. A hand-written `<div class="gloss">` opening inside another
+`gloss` div still ends the first one, as it always has (the tolerance
+for unclosed hand-written divs). In the dictionary, a nested gloss is
+rendered inside its container's `<i>…</i>`; in a full-chapter entry
+each nested type is kept or dropped by `tags_keep` on its own, and
+dropping a container drops everything in it.
+
 ---
 
 ## Book `meta.yaml` (`<section>/<group>/<book>/meta.yaml`)
