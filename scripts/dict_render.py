@@ -380,8 +380,10 @@ def render_shloka_group(
                      line) — None if this shloka has no अन्वयः gloss (in
                      which case the caller omits the "++" line entirely).
       gloss_block  — one "<b>{label}</b>\\n<i>{content}</i>" (or just
-                     "<i>{content}</i>" with no label) per gloss div
-                     found, in document order — caller joins these with
+                     "<i>{content}</i>" with no label) per top-level
+                     gloss div found, in document order (a gloss nested
+                     inside one is rendered inside its block, not as a
+                     block of its own) — caller joins these with
                      "\\n<br>" between them (a separator, per the
                      spec's worked example: no trailing <br> after the
                      last one; the next label follows on the <br>'s
@@ -403,7 +405,10 @@ def render_shloka_group(
         raw_inner, n_details = _DETAILS_BLOCK_RE.subn("", text[node.tag_end:node.inner_end])
         if n_details and not raw_inner.strip():
             continue  # the gloss was nothing but the dropped block — no empty label
-        content = render_shloka_gloss_text(raw_inner)
+        # glosses nested inside this one (e.g. an <objection> inside a
+        # <bhashyam>) become <b>label</b><i>...</i> in place, exactly as
+        # in a notes entry — never raw <div> markup in the record
+        content = render_shloka_gloss_text(render_structural_divs(raw_inner, gloss_types))
         blocks.append(f"<b>{label}</b>\n<i>{content}</i>" if label else f"<i>{content}</i>")
         if type_key == "anvaya" and anvaya is None:
             anvaya = re.sub(r"\s+", " ", raw_inner).strip()

@@ -85,3 +85,17 @@ def test_dictionary_full_chapter_keeps_or_drops_each_nested_type():
     assert dropped == {"notes": 1}
     # dropping the container drops everything inside it
     assert dr.render_full_chapter_entry(body, GT, {"objection", "notes"}) == ""
+
+
+def test_dictionary_shloka_entry_renders_nested():
+    """dict.type: shloka — the glosses after a shloka become one block each;
+    a gloss nested inside one is rendered inside that block."""
+    group = gi.expand_gloss_shorthand(
+        "<bhashyam>a <objection label=\"बौद्धः\">q</objection>\n\n<notes>n</notes> b</bhashyam>"
+        "<notes>after</notes>", GT, allow_boxing=False)
+    anvaya, blocks = dr.render_shloka_group(group, GT)
+    assert anvaya is None
+    assert blocks == [
+        "<b>भाष्यम्</b>\n<i>a <b>बौद्धः</b><i>q</i>\n<br>\n<i>n</i> b</i>",
+        "<i>after</i>",
+    ]
