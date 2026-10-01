@@ -115,7 +115,7 @@ forms.
 
 | Attribute | Required | Meaning |
 |---|---|---|
-| `name` | yes | The topic page's `title`, exactly. |
+| `name` | yes | The topic page's `title`, exactly — or several, comma-separated (see below). |
 | `context` | one of these | Adds a सन्दर्भाः line to the topic page, with this text as the link. |
 | `define` | two | Adds a परिभाषाः row to the topic page for the term given here, using the passage as the definition. |
 
@@ -146,6 +146,27 @@ Details:
 - **No nesting.** A `<topic>` opened inside another is left as literal
   text, with a warning.
 
+### Several topics at once: `name="X, Y"`
+
+When a passage belongs to more than one topic, list them all, separated
+by commas (spaces around them don't matter):
+
+```html
+<topic name="माया, अविद्या" define="आवरणम्">…</topic>
+```
+
+Both forms accept it. The tag then counts for each topic exactly as if
+it had been tagged for that topic alone: each topic page gets the same
+सन्दर्भाः line and/or परिभाषाः row, all linking back to the same spot.
+On the text page the passage gets one ↗ per topic, each showing its
+topic's name on hover.
+
+These stop the build (fix the content and rebuild):
+
+- a name that isn't a topic's `title` — for a single name too;
+- an empty name in the list (`name="माया, "`) or the same name twice;
+- a topic `title` that contains a comma, since a comma separates names.
+
 ### Self-closing: `<topic … />`
 
 A definition that isn't shown anywhere in the text: for example, a
@@ -158,7 +179,7 @@ passage it comes from.
 
 | Attribute | Required | Meaning |
 |---|---|---|
-| `name` | yes | The topic page's `title`. |
+| `name` | yes | The topic page's `title` — or several, comma-separated. |
 | `define` | yes | The term. |
 | `entry` | yes | The definition text. Line breaks in it are kept. |
 

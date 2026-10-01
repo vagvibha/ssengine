@@ -1564,6 +1564,42 @@ class TopicDefinition:
 
 
 TOPIC_JUMP_MARK = "↗"
+
+# `<topic name="X, Y">` applies one tag to several topics. A topic title
+# can therefore never contain this separator (checked when topics are
+# discovered — see check_topic_title).
+TOPIC_NAME_SEP = ","
+
+
+class TopicTagError(ValueError):
+    """A <topic> tag (or a topic's title) the build can't use as written —
+    e.g. a name= naming a topic that doesn't exist. Always fatal: bad
+    input stops the build rather than leaving a silently missing link."""
+
+
+def check_topic_title(title: str, path: object) -> None:
+    if TOPIC_NAME_SEP in title:
+        raise TopicTagError(
+            f"{path}: topic title '{title}' contains '{TOPIC_NAME_SEP}', which separates topic names in "
+            f"<topic name=\"...\"> — remove it from the title")
+
+
+def topic_names(raw: str, topics: dict[str, "RefPage"], where: object) -> list[str]:
+    """`name=`'s value as a list of topic titles: one, or several
+    separated by TOPIC_NAME_SEP. Every one must be a known topic, listed
+    once — otherwise TopicTagError."""
+    names = [n.strip() for n in raw.split(TOPIC_NAME_SEP)]
+    if any(not n for n in names):
+        raise TopicTagError(f"{where}: <topic name=\"{raw}\"> has an empty name in its list")
+    dupes = sorted({n for n in names if names.count(n) > 1})
+    if dupes:
+        raise TopicTagError(f"{where}: <topic name=\"{raw}\"> lists {', '.join(dupes)} more than once")
+    unknown = [n for n in names if n not in topics]
+    if unknown:
+        raise TopicTagError(
+            f"{where}: <topic name=\"{raw}\"> — unknown topic(s): {', '.join(unknown)} (no topic page "
+            f"with that title under topics/*/)")
+    return names
 NON_INLINE_TOPIC_MARK = (
     '<span class="sv-topic-note-mark" '
     'title="टिप्पणीरूपेण उक्तम् — मूलपाठे प्रकाशितं नास्ति">●</span> '
@@ -1610,6 +1646,11 @@ def process_topic_tags(
     for the same pattern with shloka `sN` anchors); a sections-mode caller
     instead resets this to 0 per section (each section already has its own
     page/URL). Returns (new_body, next_index).
+
+    `name=` may list several topics, comma-separated (`name="X, Y"`): the
+    tag then counts for each of them exactly as if tagged for that one
+    alone (one anchor, one jump mark per topic). Every listed name must be
+    a known topic — anything else is a TopicTagError (build stops).
 
     `context=` and `define=` are independent on the PAIRED form, and at
     least one is required (a `<topic>` occurrence with neither is flagged
@@ -1667,11 +1708,8 @@ def process_topic_tags(
                     warn(f"{source_for_warning}: self-closing <topic name=\"{name}\"> needs both define= "
                          f"and entry= (a non-inline definition has no body to draw one from) — skipping")
                 continue
+            names = topic_names(name, topics, source_for_warning)
             if not primary:
-                continue
-            if name not in topics:
-                warn(f"{source_for_warning}: <topic name=\"{name}\"> references unknown topic "
-                     f"(no matching topics/*/*.md or topics/*/*/meta.yaml title '{name}')")
                 continue
             if (attrs.get("context") or "").strip():
                 warn(f"{source_for_warning}: self-closing <topic name=\"{name}\"> doesn't take context= "
@@ -1682,9 +1720,10 @@ def process_topic_tags(
                 warn(f"{source_for_warning}: self-closing <topic name=\"{name}\" define=\"{term}\"> "
                      f"has an empty entry= — skipping")
                 continue
-            definitions.setdefault(name, []).append(
-                TopicDefinition(term, text_html, page_rel_out_file, None, def_label())
-            )
+            for n in names:
+                definitions.setdefault(n, []).append(
+                    TopicDefinition(term, text_html, page_rel_out_file, None, def_label())
+                )
             continue
 
         if kind == "open":  # paired open
@@ -1711,21 +1750,18 @@ def process_topic_tags(
             splices.append((o_start, o_end, ""))
             splices.append((start, end, ""))
             continue
+        names = topic_names(name, topics, source_for_warning)
         counter += 1
         anchor = f"tp{counter}"
-        known = name in topics
-        if known:
-            jump_href = raw_html_href(page_rel_out_file, topics[name].rel_out_file)
-            jump_link = f' <a class="sv-topic-jump" href="{jump_href}" title="{html.escape(name)}">{TOPIC_JUMP_MARK}</a>'
-        else:
-            jump_link = ""
+        # one jump mark per topic, each titled with its topic's name
+        jump_link = "".join(
+            f' <a class="sv-topic-jump" href="{raw_html_href(page_rel_out_file, topics[n].rel_out_file)}" '
+            f'title="{html.escape(n)}">{TOPIC_JUMP_MARK}</a>'
+            for n in names
+        )
         splices.append((o_start, o_end, f'<span id="{anchor}">'))
         splices.append((start, end, f'</span>{jump_link}'))
         if not primary:
-            continue
-        if not known:
-            warn(f"{source_for_warning}: <topic name=\"{name}\"> references unknown topic "
-                 f"(no matching topics/*/*.md or topics/*/*/meta.yaml title '{name}')")
             continue
         context = (attrs.get("context") or "").strip()
         term = (attrs.get("define") or "").strip()
@@ -1736,19 +1772,21 @@ def process_topic_tags(
             continue
         if context:
             label = html.escape(context)
-            already_seen = seen_ref_labels.setdefault(name, set())
-            if label not in already_seen:
-                already_seen.add(label)
-                topics[name].references.append(Reference(name, chapter, anchor, label, page_rel_out_file, section_title))
+            for n in names:
+                already_seen = seen_ref_labels.setdefault(n, set())
+                if label not in already_seen:
+                    already_seen.add(label)
+                    topics[n].references.append(Reference(n, chapter, anchor, label, page_rel_out_file, section_title))
         if term:
             lines = [ln.strip() for ln in re.sub(r"<[^>]+>", "", inner).splitlines() if ln.strip()]
             text_html = "<br>".join(html.escape(ln) for ln in lines)
             if not text_html:
                 warn(f"{source_for_warning}: <topic name=\"{name}\" define=\"{term}\"> has no content — skipping definition")
             else:
-                definitions.setdefault(name, []).append(
-                    TopicDefinition(term, text_html, page_rel_out_file, anchor, def_label())
-                )
+                for n in names:
+                    definitions.setdefault(n, []).append(
+                        TopicDefinition(term, text_html, page_rel_out_file, anchor, def_label())
+                    )
 
     if stack and primary:
         for o_start, _, _ in stack:
@@ -3378,6 +3416,7 @@ def main():
         for cat in topic_categories:
             cat_topics = discover_ref_pages("topic", TOPICS_CONFIG.src / cat.slug, cat.rel_dir)
             for title, page in cat_topics.items():
+                check_topic_title(title, page.path)
                 if title in topics:
                     warn(f"duplicate topic title '{title}' between {topics[title].path} (category "
                          f"'{topics[title].category.title}') and {page.path} (category '{cat.title}') "
