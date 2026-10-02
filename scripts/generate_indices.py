@@ -1544,8 +1544,9 @@ class TopicDefinition:
     definition of TERM (not necessarily = X — a topic page can collect
     definitions of several distinct terms; see build_topic_definitions_table)
     found in some text, to be listed on topic X's own page. `text_html` is
-    already-escaped, already-`<br>`-joined content, safe to drop straight
-    into a table cell.
+    the definition already rendered from Markdown to single-line inline
+    HTML (render_definition_markdown), safe to drop straight into a table
+    cell.
 
     `anchor` identifies exactly where on `page_rel_out_file` this occurrence
     lives, the same way Reference does — EXCEPT it's None for a non-inline
@@ -1610,6 +1611,53 @@ def topic_names(raw: str, topics: dict[str, "RefPage"], where: object) -> list[s
             f"{where}: <topic name=\"{raw}\"> — unknown topic(s): {', '.join(unknown)} (no topic page "
             f"with that title under topics/*/)")
     return names
+
+
+# --- परिभाषा cell text: a definition's body rendered as Markdown ----------
+#
+# A definition is ordinary Markdown text: `**bold**`/`*italic*` render,
+# a plain line break inside it is just a space (one paragraph, like
+# anywhere else in Markdown), and a hard break needs two trailing spaces
+# or an explicit `<br>`. A blank line (new paragraph) becomes a <br><br>.
+#
+# Every other HTML tag in the body is dropped (its text kept), exactly as
+# before — a gloss div or <dict> tag inside the definition has no place in
+# a table cell. Markdown links render as their text only, since the whole
+# परिभाषा cell is already one link back to the passage (nested <a> is
+# invalid HTML). The result has no newlines, so it can't end the raw-HTML
+# <table> block it sits in early.
+
+_DEF_KEEP_BR_RE = re.compile(r"<(?!br\s*/?>)[^>]*>", re.IGNORECASE)
+_DEF_QUOTE_MARKER_RE = re.compile(r"^[ \t]*(?:>[ \t]?)*")
+_definition_md = None
+
+
+def render_definition_markdown(text: str) -> str:
+    """`text` (a <topic> body or entry=) as inline HTML for the परिभाषा
+    cell — see the comment above. Returns "" when it has no visible text."""
+    global _definition_md
+    if _definition_md is None:
+        import markdown  # always present alongside MkDocs; lazy so dict-only runs don't need it
+        _definition_md = markdown.Markdown()
+    text = _DEF_KEEP_BR_RE.sub("", text)
+    # Leading indentation would turn a line into a code block, and a body
+    # that continues across blockquote lines carries the quote's `> `
+    # markers on every line after the first — neither is part of the
+    # definition. Trailing spaces stay: two of them are a hard break.
+    lines = text.split("\n")
+    lines = [lines[0].lstrip()] + [_DEF_QUOTE_MARKER_RE.sub("", ln) for ln in lines[1:]]
+    _definition_md.reset()
+    out = _definition_md.convert("\n".join(lines).strip())
+    out = re.sub(r"</p>\s*<p>", "<br><br>", out)
+    out = re.sub(r"</?p>", "", out)
+    out = re.sub(r"<a\b[^>]*>(.*?)</a>", r"\1", out, flags=re.DOTALL)
+    out = re.sub(r"\s*<br\s*/?>\s*", "<br>", out, flags=re.IGNORECASE)
+    out = re.sub(r"\s*\n\s*", " ", out).strip()
+    if not re.sub(r"<[^>]+>|\s", "", out):
+        return ""
+    return out
+
+
 NON_INLINE_TOPIC_MARK = (
     '<span class="sv-topic-note-mark" '
     'title="टिप्पणीरूपेण उक्तम् — मूलपाठे प्रकाशितं नास्ति">●</span> '
@@ -1693,8 +1741,7 @@ def process_topic_tags(
         raise TopicTagError(f"{source_for_warning}: {msg}")
 
     def definition_html(text: str) -> str:
-        lines = [ln.strip() for ln in re.sub(r"<[^>]+>", "", text).splitlines() if ln.strip()]
-        return "<br>".join(html.escape(ln) for ln in lines)
+        return render_definition_markdown(text)
 
     def resolve(attrs_str: str, body_text: str | None) -> tuple[list[str], str, str, str]:
         """Checks one tag and returns (names, raw name=, definition html
