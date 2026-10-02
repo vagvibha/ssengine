@@ -95,11 +95,105 @@ they're reached from the landing page. The topic has one nav entry, its
 landing page. A part file named `_definitions.md`, `_references.md` or
 `index.md` is a build error in sections mode. To link to a passage
 inside a part, `xref()` the part's own page, e.g.
-`xref("topics/advaita/maya/02.md")`.
+`xref("topics/advaita/maya/02.md")` — see
+[Linking to a topic](#linking-to-a-topic).
 
 The topics listing page (`docs/topics/index.md`) lists every category in
 `order`. A category with `expanded_by_default: false` is collapsed behind
 a `<details>`.
+
+## Linking to a topic
+
+For a hand-written link to a topic, or to a spot on its page, use the
+`xref()` macro. It works from any page: a text's section file or another
+topic.
+
+### The page
+
+```markdown
+[ध्वनिः]({{ xref("topics/sahitya/dhvani") }})
+```
+
+The path is the topic's file under the content root, so it starts with
+`topics/`. The `.md` is optional; `xref("topics/sahitya/dhvani.md")` is
+the same link. `xref()` turns it into the right relative link from the
+page it's written on, so you never count `../`.
+
+### A heading on the page
+
+Put the `#anchor` after the `}}`, as plain text, with no quotes:
+
+```markdown
+[लक्षणा]({{ xref("topics/sahitya/shabdashakti") }}#लक्षणा)
+```
+
+Devanagari headings get a readable id: the heading text itself,
+lowercased, spaces turned into `-`, punctuation dropped. So
+`## लक्षणा` has the id `लक्षणा`.
+
+Better still, give the heading an explicit id. The link then survives
+rewording the heading:
+
+```markdown
+## लक्षणा {#lakshana}
+```
+
+```markdown
+[लक्षणा]({{ xref("topics/sahitya/shabdashakti") }}#lakshana)
+```
+
+An explicit id **replaces** the automatic one: once a heading has
+`{#lakshana}`, `#लक्षणा` no longer exists on that page.
+
+### Any other spot on the page
+
+An explicit id isn't limited to headings. Any of these gives a spot on
+the page an id you can link to:
+
+| Where | Write |
+|---|---|
+| a heading | `## परीक्षा {#pariksha}` |
+| a whole paragraph | `{: #para-one }` on the line right after the paragraph |
+| a word or phrase | `**पदम्**{: #inline-one }` (right after the formatted text) |
+| anywhere, invisibly | `[](){#spot-one}` or `<span id="spot-one"></span>` |
+
+All of these also work inside gloss blocks, since the engine renders
+Markdown inside them. A link to one is written exactly like a heading
+link: `…}}#para-one)`.
+
+### A topic in sections mode
+
+A [sections-mode](#sections-mode) topic's headings are on its part
+pages, not its landing page. Link to the part file itself:
+
+```markdown
+[श्रवणम्]({{ xref("topics/vishaya/sadhana/shravana") }}#श्रवणम्)
+```
+
+`xref("topics/vishaya/sadhana")` plus `#श्रवणम्` opens the landing
+page, which lists the parts and has no such heading. In the default
+`single_page` mode the reverse holds: all parts are on
+`topics/vishaya/sadhana.md`, and there is no `sadhana/shravana` page.
+A plain link to the topic (no `#`) works in either mode. A link to a
+heading inside a part has to change if you switch the topic's
+`topic_display_style`.
+
+If a part has no `# ` heading of its own, the engine adds
+`# <topic> — <part title>` at the top of its page; link to the part page
+without an `#anchor`.
+
+### Cautions
+
+- **Ids must be unique on each output page.** A `full_chapter` chapter
+  joins all its sections onto one page, and a `single_page` topic joins
+  all its parts, so an id used in two of them clashes.
+- **Don't use `tp1`, `tp2`, …** The engine gives every paired `<topic>`
+  tag an anchor named that way.
+- **A wrong anchor doesn't fail the build.** `mkdocs build --strict`
+  still passes; MkDocs only prints an `INFO` line saying the page has no
+  such anchor. A wrong **page** in `xref()` does fail the build. After
+  adding or changing anchors, check the build output for those `INFO`
+  lines.
 
 ## The `<topic>` tag
 
@@ -157,9 +251,13 @@ Details:
 - **`define` doesn't have to equal `name`.** Several terms can collect on
   one topic page, e.g. `name="साधनचतुष्टयम्" define="शमः"` in one place
   and `name="साधनचतुष्टयम्" define="दमः"` in another.
-- **Write definitions as plain text.** For the table cell, HTML tags are
-  stripped and each line becomes its own line in the cell. Markdown
-  (`**bold**`, links) is not rendered there and will show literally.
+- **A definition is ordinary Markdown.** In the table cell, `**bold**`
+  and `*italic*` render. A plain line break is just a space, as anywhere
+  in Markdown; end a line with two spaces or write `<br>` to break it. A
+  blank line leaves a visible gap. Links show as their text only, since
+  the whole cell already links to the passage. Other HTML tags are
+  dropped and their text kept. The passage on the text page is
+  unaffected.
 - **Repeated references are merged.** Within one chapter, a second
   reference to the same topic with the same label is dropped; only the
   first is listed. Use a different `context` to list both.
