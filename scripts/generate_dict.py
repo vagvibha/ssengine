@@ -60,6 +60,7 @@ from __future__ import annotations
 
 import re
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 
 import yaml
@@ -214,6 +215,9 @@ class DictConfig:
         self.auto_shloka = bool(block.get("auto_shloka", True))
         self.chapter_key = str(block.get("chapter_key", "")).strip()
         self.shloka_key_prefix = str(block.get("shloka_key_prefix", "")).strip()
+        # Verse prev/next/chapter links on every shloka record — see
+        # process_shloka_chapter.
+        self.nav = block.get("nav") is True
         # None = not set (use the default: every gloss type + shloka);
         # a list (possibly empty) = exactly these names. See
         # dict_render.render_full_chapter_entry.
@@ -226,6 +230,12 @@ class DictConfig:
             raise DictConfigError(f"{where} has no type: (expected 'notes' or 'shloka') — without it nothing is generated")
         if self.type and self.type not in ("notes", "shloka"):
             raise DictConfigError(f"{where}.type '{self.type}' — expected 'notes' or 'shloka'")
+        if self.nav:
+            if self.type != "shloka":
+                raise DictConfigError(f"{where}.nav only applies to type: shloka chapters (it links verses)")
+            if not self.shloka_key_prefix:
+                raise DictConfigError(f"{where}.nav needs shloka_key_prefix — without verse keys there is "
+                                      f"nothing to link to")
         if self.tags_keep is not None:
             if self.type != "notes":
                 raise DictConfigError(f"{where}.tags_keep only applies to type: notes chapters")
@@ -372,20 +382,66 @@ def process_notes_chapter(text: gi.Text, chapter: gi.Chapter, config: DictConfig
 
 def wrap_marker_with_link(shloka_text: str, key: str) -> str:
     """The chapter_key full-chapter view's own transform: the shloka's
-    LAST ॥...॥ marker gets wrapped in a bword:// link to its key — per
-    the spec's own example, the href drops the "e:" prefix that
-    shloka_dict_key always returns (`e:KS-03-05` -> `bword://KS-03-05`)."""
-    href_key = key[2:] if key.startswith("e:") else key
-    matches = list(dr.MARKER_RE.finditer(shloka_text))
-    m = matches[-1]
-    return f'{shloka_text[:m.start()]}<a href="bword://{href_key}">{m.group(0)}</a>{shloka_text[m.end():]}'
+    LAST ॥...॥ marker gets wrapped in a bword:// link to its own record
+    (`e:KS-03-05` -> `<a href="bword://KS-03-05">॥३।५॥</a>`)."""
+    m = dr.last_marker(shloka_text)
+    return f"{shloka_text[:m.start()]}{dr.bword_link(key, m.group(0))}{shloka_text[m.end():]}"
+
+
+# `data-alt="b"` on a shloka div: an alternate version of a verse that
+# shares its ॥…॥ number with another (e.g. a verse of doubtful
+# authorship printed alongside the accepted one). The marker stays as
+# written; only the generated key gets the suffix (`e:MD-1-31` ->
+# `e:MD-1-31b`), so each version has its own record. ASCII letters and
+# digits only, since the key is a headword.
+ALT_ATTR = "data-alt"
+ALT_RE = re.compile(r"[A-Za-z0-9]+")
+
+
+def shloka_key(shloka_raw: str, attrs: dict[str, str], config: DictConfig, section: Path) -> str | None:
+    """This shloka's generated key ("e:NAME-…", plus its data-alt suffix),
+    or None when the chapter has no shloka_key_prefix."""
+    alt = attrs.get(ALT_ATTR)
+    if alt is not None:
+        alt = alt.strip()
+        if not ALT_RE.fullmatch(alt):
+            raise dr.ShlokaKeyError(section, f'{ALT_ATTR}="{alt}" — use ASCII letters/digits only, '
+                                             f'e.g. {ALT_ATTR}="b" (it becomes part of the key)')
+        if not config.shloka_key_prefix:
+            raise dr.ShlokaKeyError(section, f'{ALT_ATTR}="{alt}" needs dict.shloka_key_prefix on the '
+                                             f'chapter — it only changes the generated key')
+    if not config.shloka_key_prefix:
+        return None
+    return dr.shloka_dict_key(shloka_raw, config.shloka_key_prefix, source_for_warning=section) + (alt or "")
+
+
+@dataclass
+class _ShlokaEntry:
+    """One shloka's record pieces, kept until the whole chapter is read so
+    its navigation line (dict.nav) can name both neighbours."""
+    shloka_text: str
+    skip: list[str]
+    syns: list[str]
+    anvaya: str | None
+    blocks: list[str]
+    key: str | None
+    label: str | None  # the verse's own ॥…॥ marker (+ data-alt suffix), for nav links
 
 
 def process_shloka_chapter(text: gi.Text, chapter: gi.Chapter, config: DictConfig) -> bool:
-    """Returns True if at least one file was written."""
+    """Returns True if at least one file was written.
+
+    Every shloka's key must be unique within the chapter (a repeated
+    number needs `data-alt` on all but one of them — see ALT_ATTR); a
+    repeat stops the build, since links to that key would be ambiguous.
+
+    With dict.nav, each record ends with a navigation line (see
+    dr.shloka_nav_line): the previous and next verse of this chapter —
+    never across chapters — and the chapter's own full-chapter record
+    when one is written."""
     wrote = False
-    records: list[str] = []
-    full_chapter_parts: list[str] = []  # for chapter_key, back-to-back shloka text (linked if shloka_key_prefix set)
+    entries: list[_ShlokaEntry] = []
+    seen_keys: dict[str, Path] = {}  # key -> the section it first appeared in
 
     if config.chapter_key and not config.shloka_key_prefix:
         gi.warn(
@@ -428,9 +484,16 @@ def process_shloka_chapter(text: gi.Text, chapter: gi.Chapter, config: DictConfi
             # (it's prepended to the "+" line below), so it counts as a
             # de-facto syn — only skip the shloka if there's neither an
             # explicit syn NOR a generated key to look it up by.
-            key = None
-            if config.shloka_key_prefix:
-                key = dr.shloka_dict_key(shloka_raw, config.shloka_key_prefix, source_for_warning=section)
+            key = shloka_key(shloka_raw, attrs, config, section)
+            if key:
+                if key in seen_keys:
+                    first = seen_keys[key]
+                    where = "earlier in this file" if first == section else f"in {first}"
+                    raise dr.ShlokaKeyError(
+                        section,
+                        f"shloka key {key[2:]} is already used by a shloka {where} — if this is an alternate "
+                        f'version of that verse, mark it with {ALT_ATTR}="b" (or "c", …) on its shloka div')
+                seen_keys[key] = section
 
             if not syns and not key:
                 gi.warn(f"{section}: shloka with no syns= (div attr or frontmatter) and no shloka_key_prefix — skipping (nothing to key it by)")
@@ -447,13 +510,29 @@ def process_shloka_chapter(text: gi.Text, chapter: gi.Chapter, config: DictConfi
             # the key doubles as a headword so a bword:// link elsewhere (e.g. the
             # full-chapter view below) can resolve straight to this record
             record_syns = [key] + syns if key else syns
-            records.append(dr.shloka_record(shloka_text, skip, record_syns, anvaya, blocks))
+            # the nav label: the verse's own marker, plus any data-alt suffix
+            label = None
+            if key:
+                alt = (attrs.get(ALT_ATTR) or "").strip()
+                label = dr.last_marker(shloka_text, section).group(0) + alt
+            entries.append(_ShlokaEntry(shloka_text, skip, record_syns, anvaya, blocks, key, label))
 
-            if config.chapter_key:
-                if key:
-                    full_chapter_parts.append(wrap_marker_with_link(shloka_text, key))
-                else:
-                    full_chapter_parts.append(shloka_text)
+    # for chapter_key: back-to-back shloka text (linked if shloka_key_prefix set)
+    full_chapter_parts = [
+        wrap_marker_with_link(e.shloka_text, e.key) if e.key else e.shloka_text for e in entries
+    ] if config.chapter_key else []
+    full_body = "\n\n".join(full_chapter_parts).strip()
+    # the Up link only when the chapter's own full record is written below
+    up_key = config.chapter_key if (config.nav and full_body) else None
+
+    records: list[str] = []
+    for i, e in enumerate(entries):
+        nav = None
+        if config.nav:  # every entry has a key (nav requires shloka_key_prefix)
+            prev = (entries[i - 1].key, entries[i - 1].label) if i > 0 else None
+            next_ = (entries[i + 1].key, entries[i + 1].label) if i + 1 < len(entries) else None
+            nav = dr.shloka_nav_line(prev, up_key, next_)
+        records.append(dr.shloka_record(e.shloka_text, e.skip, e.syns, e.anvaya, e.blocks, nav))
 
     out_dir = out_dir_for(config, text)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -475,7 +554,6 @@ def process_shloka_chapter(text: gi.Text, chapter: gi.Chapter, config: DictConfi
         # "always of type notes" (spec) — the full-chapter view is a single
         # notes-style record, even for a dict.type: shloka chapter.
         full_header = base_header(text, config, "notes", config.skip)
-        full_body = "\n\n".join(full_chapter_parts).strip()
         full_path = out_dir / f"{chapter.slug}-full.txt"
         if not full_body:
             print(f"skipping {full_path} (no entries)")

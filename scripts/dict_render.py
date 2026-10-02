@@ -283,14 +283,20 @@ class ShlokaKeyError(ValueError):
         super().__init__(f"{source}: {message}")
 
 
+def last_marker(shloka_text: str, source_for_warning: object = "") -> re.Match:
+    """The shloka's own ॥...॥ number marker: the LAST one in its text (an
+    earlier one may be a pada's). Raises ShlokaKeyError if there's none."""
+    matches = list(MARKER_RE.finditer(shloka_text))
+    if not matches:
+        raise ShlokaKeyError(source_for_warning, "no ॥...॥ ending marker found in shloka text")
+    return matches[-1]
+
+
 def extract_marker_numbers(shloka_text: str, source_for_warning: object = "") -> list[int]:
     """The numbers inside the LAST ॥...॥ marker in `shloka_text`, left to
     right, as ints (Devanagari digits only — the site's own convention).
     Raises ShlokaKeyError if there's no ॥...॥ marker at all."""
-    matches = list(MARKER_RE.finditer(shloka_text))
-    if not matches:
-        raise ShlokaKeyError(source_for_warning, "no ॥...॥ ending marker found in shloka text")
-    inner = matches[-1].group(1)
+    inner = last_marker(shloka_text, source_for_warning).group(1)
     numbers = []
     for piece in NUMBER_SPLIT_RE.split(inner):
         piece = piece.strip()
@@ -419,12 +425,16 @@ def render_shloka_group(
 
 def shloka_record(
     shloka_text: str, skip: list[str], syns: list[str], anvaya: str | None, gloss_blocks: list[str],
+    nav: str | None = None,
 ) -> str:
     """Assembles one shloka-format record: the shloka text (as given —
     caller passes it already stripped of its <div> wrapper, e.g. via
     render_structural_divs), the "====" delimiter, then the top part
     ("-"/"+"/"++" lines, each omitted entirely when empty) and the
-    bottom part (glosses, "\\n<br>"-joined)."""
+    bottom part (glosses, "\\n<br>"-joined). `nav` (dict.nav: true — see
+    shloka_nav_line) is appended as one more, final gloss block."""
+    if nav:
+        gloss_blocks = [*gloss_blocks, nav]
     lines = [shloka_text.strip(), "===="]
     if skip:
         lines.append(f"- {';'.join(skip)}")
@@ -434,6 +444,36 @@ def shloka_record(
         lines.append(f"++ {anvaya}")
     lines.append("\n<br>".join(gloss_blocks))
     return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Verse navigation (dict.nav: true)
+# ---------------------------------------------------------------------------
+
+NAV_SEP = " · "
+
+
+def bword_link(key: str, label: str) -> str:
+    """`<a href="bword://KEY">label</a>`, with the "e:" that
+    shloka_dict_key puts on every generated key dropped from the href."""
+    href_key = key[2:] if key.startswith("e:") else key
+    return f'<a href="bword://{href_key}">{label}</a>'
+
+
+def shloka_nav_line(prev: tuple[str, str] | None, up_key: str | None,
+                    next_: tuple[str, str] | None) -> str | None:
+    """The navigation line for one verse: `‹ prev · chapter · next ›`,
+    each part a bword:// link, any missing part left out along with its
+    separator. `prev`/`next_` are (key, label); `up_key` is the
+    chapter_key (its own label). None when there's nothing to link."""
+    parts = []
+    if prev:
+        parts.append(bword_link(*prev))
+    if up_key:
+        parts.append(bword_link(up_key, up_key))
+    if next_:
+        parts.append(bword_link(*next_))
+    return f"‹ {NAV_SEP.join(parts)} ›" if parts else None
 
 
 # ---------------------------------------------------------------------------

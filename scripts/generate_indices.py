@@ -281,7 +281,7 @@ CHAPTER_META_KEYS = {
 }
 CHAPTER_DICT_KEYS = {
     "type": "str", "title": "str", "skip": "list", "auto_shloka": "bool",
-    "chapter_key": "str", "shloka_key_prefix": "str", "tags_keep": "list",
+    "chapter_key": "str", "shloka_key_prefix": "str", "tags_keep": "list", "nav": "bool",
 }
 TOPIC_CATEGORY_META_KEYS = {"title": "str", "order": "str", "expanded_by_default": "bool"}
 # Per-topic overrides of the matching site_config.yaml labels: keys, for

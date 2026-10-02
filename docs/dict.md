@@ -55,12 +55,14 @@ A chapter is dictionary-enabled when its `meta.yaml` has a `dict:` block.
 | `tags_keep` | list | notes | Which divs the full-chapter record keeps (see [below](#full-chapter-record-notes)). Needs `chapter_key`. |
 | `shloka_key_prefix` | text | shloka | Generate a key for every shloka (see [Shloka keys](#shloka-keys)). |
 | `auto_shloka` | bool | shloka | `false` adds `HEADER:auto_shloka=false`. Default true. |
+| `nav` | bool | shloka | `true` ends every shloka record with a link line to the previous and next verse and the chapter (see [Verse navigation](#verse-navigation)). Needs `shloka_key_prefix`. Default false. |
 
 The build fails if:
 - `dict:` has keys but no `type`, or `type` isn't `notes`/`shloka`
 - the book has no `dict.folder`
 - `tags_keep` is set on a shloka chapter or without `chapter_key`, lists
   `details`, or names something unknown
+- `nav` is set on a notes chapter, or without `shloka_key_prefix`
 
 ---
 
@@ -195,6 +197,7 @@ HEADER:auto_shloka=false     (only when auto_shloka: false)
 <br>
 <b>label</b>
 <i>gloss</i>
+<br>‹ <prev> · <chapter> · <next> ›     (only with nav: true)
 ```
 
 - **syns / skip per shloka:** the div's own `syns=` / `skip=` attributes,
@@ -217,6 +220,51 @@ how many there are). For the marker `॥५।९।३॥`:
 
 A shloka with no marker, or too few numbers for the prefix, fails the
 build.
+
+**Every key must be unique within its chapter.** Two shlokas with the
+same key fail the build, naming both files: a link to that key couldn't
+tell them apart.
+
+**Alternate verses.** When a verse has alternate versions sharing its
+number (e.g. verses of doubtful authorship printed alongside the
+accepted one), keep the marker as it is and mark each alternate's shloka
+div with `data-alt`:
+
+```html
+<div class="shloka" data-alt="b">
+…
+संलक्ष्यन्ते सलिलनिधयस्तोयमात्रावशेषाः॥१।३१॥
+</div>
+```
+
+The suffix is appended to the key only: `e:MD-1-31b`. The version
+without `data-alt` keeps `e:MD-1-31`. The marker stays `॥१।३१॥` on the
+site and in the dictionary text, and the full-chapter record links each
+version's marker to its own record. `data-alt` takes ASCII letters and
+digits only, and needs `shloka_key_prefix`. Use `b`, `c`, … per
+alternate: two alternates with the same suffix are still a duplicate.
+
+### Verse navigation
+
+With `nav: true`, each shloka record ends with one more line, after its
+glosses (joined to them by `<br>` like any gloss block; when the shloka
+has no glosses, it takes the empty gloss line):
+
+```
+<br>‹ <a href="bword://MD-1-29">॥१।२९॥</a> · <a href="bword://MD-1">MD-1</a> · <a href="bword://MD-1-31">॥१।३१॥</a> ›
+```
+
+- **Previous / next:** the neighbouring shlokas of the **same chapter**,
+  across all its section files, in order. Each is labelled with that
+  verse's own `॥…॥` marker, plus its `data-alt` suffix if any
+  (`॥१।३१॥b`). The first verse has no previous, the last no next; links
+  never cross into another chapter.
+- **Chapter:** a link to the chapter's full-chapter record, labelled with
+  `chapter_key`. Present only when `chapter_key` is set (the full record
+  is then always written).
+- A missing part is left out along with its `·`. A chapter with a single
+  verse and no `chapter_key` gets no line at all.
+- Every link points to a key written in the same run.
 
 ### Full-chapter record (shloka)
 
@@ -246,6 +294,7 @@ Fatal (non-zero exit; the generated index files aren't updated, though
 chapter files written earlier in the same run stay):
 - malformed `<dict>` / `<dictref>`
 - a bad shloka marker or `shloka_key_prefix`
+- two shlokas with the same key in one chapter, or a bad `data-alt`
 - a bad `dictionaries:` registry or undeclared `dict.folder`
 - any `dict:` config error listed above
 - any unknown key or wrong-kind value in any YAML file
