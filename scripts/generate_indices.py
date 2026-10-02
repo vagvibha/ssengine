@@ -1570,6 +1570,16 @@ TOPIC_JUMP_MARK = "↗"
 # discovered — see check_topic_title).
 TOPIC_NAME_SEP = ","
 
+# Attributes each <topic> form accepts — anything else stops the build.
+TOPIC_ATTRS_PAIRED = ("name", "define", "context")
+TOPIC_ATTRS_SELF_CLOSING = ("name", "define", "entry", "context")
+
+# A paired <topic> with neither define= nor context= uses its body as the
+# सन्दर्भाः label; a link label should be a short pointer, not a passage.
+# Counted in characters (Unicode code points) of the tag-stripped text —
+# roughly 25–30 Devanagari aksharas.
+TOPIC_LABEL_MAX = 70
+
 
 class TopicTagError(ValueError):
     """A <topic> tag (or a topic's title) the build can't use as written —
@@ -1613,69 +1623,56 @@ def process_topic_tags(
     seen_ref_labels: dict[str, set[str]],
     source_for_warning: object = "", primary: bool = True,
 ) -> tuple[str, int]:
-    """Scans `body` for `<topic>` tags, in TWO forms:
+    """Scans `body` for `<topic>` tags, in two forms, and adds what each
+    one says to its topic page(s):
 
-    - PAIRED — `<topic name="..." define="?" context="?">...</topic>` —
-      rewritten into `<span id="tpN">...</span>` (so the surrounding
-      content displays exactly as authored, just with an anchor dropped at
-      that precise spot) immediately followed by a small forward jump-link
-      to that topic's own page — and, when `primary`, registering a
-      Reference and/or TopicDefinition on the matching topic's page.
-    - SELF-CLOSING — `<topic name="..." define="term"
-      entry="...">` (no body, and never `context=`) — a definition NOT
-      tied to any published passage: a note about a term the site doesn't
-      otherwise display inline. Always stripped from the output entirely
-      (like `<dict entry="...">`'s self-closing form). Its मूलम् link (see
-      build_topic_definitions_table) opens the referencing chapter/section
-      page at the top rather than a precise anchor, and the row carries a
-      small indicator marking it as non-inline.
+    - PAIRED — `<topic name="..." [define="term"] [context="label"]>body</topic>`
+      — the body stays on the page exactly as authored, wrapped in
+      `<span id="tpN">` (so back-links land on that spot) and followed by
+      one small ↗ jump-link per topic.
+    - SELF-CLOSING — `<topic name="..." [define="term" entry="text"]
+      [context="label"]/>` — removed from the page entirely; no anchor
+      and no ↗. Its back-links open the chapter/section page at the top
+      (a definition's row also carries a small non-inline marker).
+
+    What gets added (same rules for both forms):
+      - DEFINITION (परिभाषाः row) when define= is present. Its text is the
+        body (paired) or entry= (self-closing).
+      - REFERENCE (सन्दर्भाः line) when context= is present, labelled with
+        it; or, for a paired tag with neither define= nor context=,
+        labelled with the body itself — which must then be at most
+        TOPIC_LABEL_MAX characters, since it's a link label.
+      - define= + context= adds both.
+
+    `name=` may list several topics, comma-separated (`name="X, Y"`): the
+    tag then counts for each of them exactly as if tagged for that one
+    alone. Every listed name must be a known topic.
+
+    Anything else is a TopicTagError and stops the build: unknown
+    attribute (paired: name/define/context; self-closing: also entry),
+    missing or unknown name, empty define=/context=/entry=/body where one
+    is needed, entry= without define= or vice versa, a self-closing tag
+    with neither a definition nor context=, an over-long body label, a
+    <topic> opened inside another, a stray </topic>, or an unclosed one.
 
     Both forms are found via a token-based scan (TOPIC_OPEN_RE/
     TOPIC_CLOSE_RE, paired up procedurally) rather than one DOTALL regex
     spanning `<topic...>` to the next `</topic>` — the latter would
     misfire across an EARLIER self-closing `<topic .../>` by treating
     everything up to the NEXT real `</topic>` as that unrelated tag's
-    "inner" content (the same hazard dict_extract.py's DICT_OPEN_RE/
-    DICT_CLOSE_RE tokenizing avoids for `<dict>`).
+    "inner" content.
 
-    `start_index` lets callers number tp-anchors (paired occurrences only
-    — a self-closing one needs no anchor, having nothing to jump from)
+    `start_index` lets callers number tp-anchors (paired tags only)
     contiguously across an entire page (a full_chapter-mode chapter
     concatenates every section onto one page, so ids must stay unique
-    across all of them — see render_chapter_full/record_shloka_references
-    for the same pattern with shloka `sN` anchors); a sections-mode caller
-    instead resets this to 0 per section (each section already has its own
-    page/URL). Returns (new_body, next_index).
-
-    `name=` may list several topics, comma-separated (`name="X, Y"`): the
-    tag then counts for each of them exactly as if tagged for that one
-    alone (one anchor, one jump mark per topic). Every listed name must be
-    a known topic — anything else is a TopicTagError (build stops).
-
-    `context=` and `define=` are independent on the PAIRED form, and at
-    least one is required (a `<topic>` occurrence with neither is flagged
-    with a warning and does nothing beyond the anchor/jump-link — see
-    below):
-      - `context="..."` ALONE adds a सन्दर्भाः (reference) entry, labeled
-        with this string — a plain "topic X is discussed/relevant here"
-        pointer, no definition implied.
-      - `define="<term>"` ALONE adds a परिभाषाः (definition) entry for
-        TERM — a definition doesn't need its own separate सन्दर्भाः row
-        too (that would just be the same location listed twice on the
-        same page); if the passage is ALSO worth a standalone सन्दर्भाः
-        entry in its own right, add `context=` too.
-      - BOTH together add both, one row each, `context`'s value used as
-        the reference's label.
-    The SELF-CLOSING form always requires BOTH `define=` and `entry=`
-    (there's no body to draw a definition from otherwise) and never takes
-    `context=` (warned and ignored if given — there's no passage on the
-    page for a reference to point at).
+    across all of them); a sections-mode caller resets it to 0 per
+    section. Returns (new_body, next_index).
 
     `seen_ref_labels` (topic name -> the set of सन्दर्भाः labels already
-    added for THIS topic IN THIS CHAPTER) dedupes reference entries — see
-    the original docstring for the full reasoning; unchanged here, and
-    doesn't apply to the self-closing form (which never adds a Reference
-    at all).
+    added for THAT topic IN THIS CHAPTER) drops a repeated reference with
+    the same label. `primary=False` (a second rendering of the same
+    content, e.g. a combined full-chapter page) still checks every tag and
+    writes anchors/jump-links, but adds no rows a second time.
     """
     tokens: list[tuple[int, int, str, str, bool]] = []
     for m in TOPIC_OPEN_RE.finditer(body):
@@ -1692,65 +1689,97 @@ def process_topic_tags(
         base = f"{chapter.text.title} — {chapter.nav_label}"
         return f"{base} — {section_title}" if section_title else base
 
+    def fail(msg: str) -> None:
+        raise TopicTagError(f"{source_for_warning}: {msg}")
+
+    def definition_html(text: str) -> str:
+        lines = [ln.strip() for ln in re.sub(r"<[^>]+>", "", text).splitlines() if ln.strip()]
+        return "<br>".join(html.escape(ln) for ln in lines)
+
+    def resolve(attrs_str: str, body_text: str | None) -> tuple[list[str], str, str, str]:
+        """Checks one tag and returns (names, raw name=, definition html
+        or "", reference label html or ""). `body_text` is None for the
+        self-closing form. See the docstring above for the rules."""
+        attrs = parse_attrs(attrs_str)
+        tag = f"<topic {attrs_str.strip()}{'/' if body_text is None else ''}>"
+        allowed = TOPIC_ATTRS_SELF_CLOSING if body_text is None else TOPIC_ATTRS_PAIRED
+        unknown = [k for k in attrs if k not in allowed]
+        if unknown:
+            extra = (" — entry= is only for the self-closing form; in the paired form the body is the "
+                     "definition" if "entry" in unknown and body_text is not None else "")
+            fail(f"{tag}: unknown attribute(s) {', '.join(unknown)} (allowed: {', '.join(allowed)}){extra}")
+        raw_name = (attrs.get("name") or "").strip()
+        if not raw_name:
+            fail(f"{tag}: no name=")
+        names = topic_names(raw_name, topics, source_for_warning)
+        term = (attrs.get("define") or "").strip()
+        context = (attrs.get("context") or "").strip()
+        if "define" in attrs and not term:
+            fail(f"{tag}: define= is empty")
+        if "context" in attrs and not context:
+            fail(f"{tag}: context= is empty")
+
+        def_html = ""
+        if body_text is None:
+            entry = (attrs.get("entry") or "").strip()
+            if term and not entry:
+                fail(f"{tag}: define= needs entry= (the definition text) in the self-closing form")
+            if entry and not term:
+                fail(f"{tag}: entry= needs define= (the term it defines)")
+            if not term and not context:
+                fail(f"{tag}: needs define= + entry= (a definition) and/or context= (a reference)")
+            def_html = definition_html(entry) if term else ""
+        elif term:
+            def_html = definition_html(body_text)
+            if not def_html:
+                fail(f"{tag}: define=\"{term}\" but the body (the definition) is empty")
+
+        label = html.escape(context) if context else ""
+        if body_text is not None and not term and not context:
+            plain = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", "", body_text)).strip()
+            if not plain:
+                fail(f"{tag}: empty body and no define=/context= — nothing to add to the topic page")
+            if len(plain) > TOPIC_LABEL_MAX:
+                fail(f"{tag}: the body becomes this reference's label, but it's {len(plain)} characters "
+                     f"(max {TOPIC_LABEL_MAX}) — add a short context=\"...\" for the label instead")
+            label = html.escape(plain)
+        return names, raw_name, def_html, label
+
+    def add_reference(names: list[str], label: str, anchor: str | None) -> None:
+        for n in names:
+            already_seen = seen_ref_labels.setdefault(n, set())
+            if label not in already_seen:
+                already_seen.add(label)
+                topics[n].references.append(Reference(n, chapter, anchor, label, page_rel_out_file, section_title))
+
     for start, end, kind, attrs_str, self_closing in tokens:
         if kind == "open" and self_closing:
-            splices.append((start, end, ""))  # self-closing never shows anything, known or not
-            attrs = parse_attrs(attrs_str)
-            name = (attrs.get("name") or "").strip()
-            if not name:
-                if primary:
-                    warn(f"{source_for_warning}: self-closing <topic> tag with no name= attribute — skipping")
-                continue
-            term = (attrs.get("define") or "").strip()
-            entry = (attrs.get("entry") or "").strip()
-            if not term or not entry:
-                if primary:
-                    warn(f"{source_for_warning}: self-closing <topic name=\"{name}\"> needs both define= "
-                         f"and entry= (a non-inline definition has no body to draw one from) — skipping")
-                continue
-            names = topic_names(name, topics, source_for_warning)
+            splices.append((start, end, ""))  # never shows anything on the page
+            names, _, def_html, label = resolve(attrs_str, None)
             if not primary:
                 continue
-            if (attrs.get("context") or "").strip():
-                warn(f"{source_for_warning}: self-closing <topic name=\"{name}\"> doesn't take context= "
-                     f"(no passage on the page for a reference to point at) — ignoring")
-            lines = [ln.strip() for ln in entry.splitlines() if ln.strip()]
-            text_html = "<br>".join(html.escape(ln) for ln in lines)
-            if not text_html:
-                warn(f"{source_for_warning}: self-closing <topic name=\"{name}\" define=\"{term}\"> "
-                     f"has an empty entry= — skipping")
-                continue
-            for n in names:
-                definitions.setdefault(n, []).append(
-                    TopicDefinition(term, text_html, page_rel_out_file, None, def_label())
-                )
+            term = (parse_attrs(attrs_str).get("define") or "").strip()
+            if def_html:
+                for n in names:
+                    definitions.setdefault(n, []).append(
+                        TopicDefinition(term, def_html, page_rel_out_file, None, def_label())
+                    )
+            if label:
+                add_reference(names, label, None)  # no anchor — the link opens the page at its top
             continue
 
         if kind == "open":  # paired open
             if stack:
-                if primary:
-                    warn(f"{source_for_warning}: <topic> opened at offset {start} before the one opened "
-                         f"at offset {stack[-1][0]} was closed (no nesting supported) — left as-is")
-                continue
+                fail(f"<topic> opened before the one opened at offset {stack[-1][0]} was closed "
+                     f"(topics can't nest)")
             stack.append((start, end, attrs_str))
             continue
 
         # close
         if not stack:
-            if primary:
-                warn(f"{source_for_warning}: </topic> with no matching open <topic> — left as-is")
-            continue
+            fail(f"</topic> at offset {start} with no matching open <topic>")
         o_start, o_end, o_attrs_str = stack.pop()
-        attrs = parse_attrs(o_attrs_str)
-        name = (attrs.get("name") or "").strip()
-        inner = body[o_end:start]
-        if not name:
-            if primary:
-                warn(f"{source_for_warning}: <topic> tag with no name= attribute — leaving unlinked")
-            splices.append((o_start, o_end, ""))
-            splices.append((start, end, ""))
-            continue
-        names = topic_names(name, topics, source_for_warning)
+        names, _, def_html, label = resolve(o_attrs_str, body[o_end:start])
         counter += 1
         anchor = f"tp{counter}"
         # one jump mark per topic, each titled with its topic's name
@@ -1763,34 +1792,17 @@ def process_topic_tags(
         splices.append((start, end, f'</span>{jump_link}'))
         if not primary:
             continue
-        context = (attrs.get("context") or "").strip()
-        term = (attrs.get("define") or "").strip()
-        if not context and not term:
-            warn(f"{source_for_warning}: <topic name=\"{name}\"> has neither context= nor define= "
-                 f"— it won't show up anywhere on {name}'s own page. Add context=\"...\" for a plain "
-                 f"reference, define=\"<term>\" for a definition, or both.")
-            continue
-        if context:
-            label = html.escape(context)
+        if label:
+            add_reference(names, label, anchor)
+        if def_html:
+            term = (parse_attrs(o_attrs_str).get("define") or "").strip()
             for n in names:
-                already_seen = seen_ref_labels.setdefault(n, set())
-                if label not in already_seen:
-                    already_seen.add(label)
-                    topics[n].references.append(Reference(n, chapter, anchor, label, page_rel_out_file, section_title))
-        if term:
-            lines = [ln.strip() for ln in re.sub(r"<[^>]+>", "", inner).splitlines() if ln.strip()]
-            text_html = "<br>".join(html.escape(ln) for ln in lines)
-            if not text_html:
-                warn(f"{source_for_warning}: <topic name=\"{name}\" define=\"{term}\"> has no content — skipping definition")
-            else:
-                for n in names:
-                    definitions.setdefault(n, []).append(
-                        TopicDefinition(term, text_html, page_rel_out_file, anchor, def_label())
-                    )
+                definitions.setdefault(n, []).append(
+                    TopicDefinition(term, def_html, page_rel_out_file, anchor, def_label())
+                )
 
-    if stack and primary:
-        for o_start, _, _ in stack:
-            warn(f"{source_for_warning}: <topic> opened at offset {o_start} was never closed")
+    if stack:
+        fail(f"<topic> opened at offset {stack[0][0]} was never closed")
 
     return apply_splices(body, splices), counter
 
@@ -3108,7 +3120,8 @@ def topic_reference_lines(page: RefPage, current_rel_file: str) -> list[str]:
     output page they're written onto."""
     lines = []
     for ref in page.references:
-        link = rel_link(current_rel_file, ref.page_rel_out_file) + f"#{ref.anchor}"
+        # a self-closing <topic context=> has no anchor: link opens the page at its top
+        link = rel_link(current_rel_file, ref.page_rel_out_file) + (f"#{ref.anchor}" if ref.anchor else "")
         lines.append(f"- [{ref.preview}]({link}) — {ref.label}")
     return lines
 

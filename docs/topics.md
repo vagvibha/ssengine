@@ -104,47 +104,65 @@ a `<details>`.
 ## The `<topic>` tag
 
 Written anywhere in a text's section files: inside prose, a shloka, or a
-gloss. It isn't processed inside topic pages themselves. There are two
-forms.
+gloss. It isn't processed inside topic pages themselves.
 
-### Paired: `<topic …>passage</topic>`
+### The two forms
 
 ```html
 <topic name="रसः" context="रसस्य स्वरूपम्">विभावानुभावव्यभिचारिसंयोगाद्रसनिष्पत्तिः</topic>
+<topic name="साधनचतुष्टयम्" define="तितिक्षा" entry="सहनं सर्वदुःखानामप्रतीकारपूर्वकम्"/>
 ```
 
-| Attribute | Required | Meaning |
-|---|---|---|
-| `name` | yes | The topic page's `title`, exactly — or several, comma-separated (see below). |
-| `context` | one of these | Adds a सन्दर्भाः line to the topic page, with this text as the link. |
-| `define` | two | Adds a परिभाषाः row to the topic page for the term given here, using the passage as the definition. |
+- **Paired, `<topic …>body</topic>`:** the body is shown on the page
+  unchanged, with an invisible anchor around it (so back-links land on
+  that exact spot) and a small ↗ link to the topic after it.
+- **Self-closing, `<topic … />`:** nothing is shown on the page — no
+  anchor, no ↗. Back-links from the topic page open the chapter page at
+  the top. Use it for something you want on the topic page without a
+  passage in the text to point at.
 
-What each combination gets you:
+| Attribute | Paired | Self-closing | Meaning |
+|---|---|---|---|
+| `name` | required | required | The topic's `title`, exactly — or several, comma-separated (below). |
+| `define` | optional | optional | Adds a परिभाषाः row for this term. |
+| `entry` | not allowed | with `define` | The definition text (the body is the definition in the paired form). |
+| `context` | optional | optional | Adds a सन्दर्भाः line with this text as the link. |
 
-| You write | On the text page | On the topic page |
+### What goes on the topic page
+
+- **`define`** adds a परिभाषाः row: the term, and as its definition the
+  body (paired) or `entry` (self-closing).
+- **`context`** adds a सन्दर्भाः line labelled with its text.
+- **Neither, paired:** a सन्दर्भाः line labelled with the body itself.
+  It's a link label, so the body must be at most 70 characters (about
+  25–30 Devanagari aksharas); for a longer passage, add a short
+  `context`.
+- **Both `define` and `context`:** both a row and a line.
+
+| You write | परिभाषाः | सन्दर्भाः |
 |---|---|---|
-| `name` + `context` | the passage, then a small ↗ link to the topic | a सन्दर्भाः line |
-| `name` + `define` | same | a परिभाषाः row |
-| `name` + `context` + `define` | same | both |
-| `name` only | same | nothing (warning) |
+| `<topic name="X" define="Y" entry="Z"/>` | Y = Z | — |
+| `<topic name="X" define="Y">Z</topic>` | Y = Z | — |
+| `<topic name="X" context="Y"/>` | — | Y (opens the page top) |
+| `<topic name="X">Y</topic>` | — | Y |
+| `<topic name="X" context="C">long passage</topic>` | — | C |
+| `<topic name="X" define="Y" context="C">Z</topic>` | Y = Z | C |
+| `<topic name="X" define="Y" context="C" entry="Z"/>` | Y = Z (●) | C (opens the page top) |
+
+A definition from the self-closing form is marked with a small ● (hover:
+टिप्पणीरूपेण उक्तम्), since there's no passage behind it.
 
 Details:
 
-- **The passage itself is shown unchanged.** The tag is replaced by an
-  invisible anchor around it, so back-links land on the exact spot, not
-  just the top of the page.
 - **`define` doesn't have to equal `name`.** Several terms can collect on
   one topic page, e.g. `name="साधनचतुष्टयम्" define="शमः"` in one place
   and `name="साधनचतुष्टयम्" define="दमः"` in another.
-- **Write definitions as plain text.** For the table cell, HTML tags in
-  the passage are stripped and each line becomes its own line in the
-  cell. Markdown (`**bold**`, links) is not rendered there and will show
-  literally.
+- **Write definitions as plain text.** For the table cell, HTML tags are
+  stripped and each line becomes its own line in the cell. Markdown
+  (`**bold**`, links) is not rendered there and will show literally.
 - **Repeated references are merged.** Within one chapter, a second
-  reference to the same topic with the same `context` text is dropped;
-  only the first is listed. Use a different `context` to list both.
-- **No nesting.** A `<topic>` opened inside another is left as literal
-  text, with a warning.
+  reference to the same topic with the same label is dropped; only the
+  first is listed. Use a different `context` to list both.
 
 ### Several topics at once: `name="X, Y"`
 
@@ -156,37 +174,26 @@ by commas (spaces around them don't matter):
 ```
 
 Both forms accept it. The tag then counts for each topic exactly as if
-it had been tagged for that topic alone: each topic page gets the same
-सन्दर्भाः line and/or परिभाषाः row, all linking back to the same spot.
-On the text page the passage gets one ↗ per topic, each showing its
-topic's name on hover.
+it had been tagged for that topic alone. On the text page a paired tag
+gets one ↗ per topic, each showing its topic's name on hover.
 
-These stop the build (fix the content and rebuild):
+### Errors
 
-- a name that isn't a topic's `title` — for a single name too;
-- an empty name in the list (`name="माया, "`) or the same name twice;
-- a topic `title` that contains a comma, since a comma separates names.
+Anything the engine can't use as written stops the build, with the file
+and the tag in the message:
 
-### Self-closing: `<topic … />`
-
-A definition that isn't shown anywhere in the text: for example, a
-standard definition you want on the topic page without publishing the
-passage it comes from.
-
-```html
-<topic name="साधनचतुष्टयम्" define="तितिक्षा" entry="सहनं सर्वदुःखानामप्रतीकारपूर्वकम्" />
-```
-
-| Attribute | Required | Meaning |
-|---|---|---|
-| `name` | yes | The topic page's `title` — or several, comma-separated. |
-| `define` | yes | The term. |
-| `entry` | yes | The definition text. Line breaks in it are kept. |
-
-It adds a परिभाषाः row marked with a small ● (hover: टिप्पणीरूपेण उक्तम्),
-and its source link opens the chapter page at the top, since there's no
-passage to point to. The tag itself is removed from the page. `context`
-isn't allowed here (it's ignored with a warning).
+- a name that isn't a topic's `title`, an empty name in a list
+  (`name="माया, "`), the same name twice, or no `name` at all;
+- a topic `title` containing a comma;
+- an attribute not in the table above (e.g. `source=`), or `entry` on a
+  paired tag;
+- `define` without `entry`, or `entry` without `define` (self-closing);
+- a self-closing tag with neither `define`+`entry` nor `context`;
+- an empty `define`, `context` or `entry`; an empty body where it's the
+  definition or the label;
+- a body label over 70 characters;
+- a `<topic>` opened inside another, a `</topic>` with no opening tag,
+  or a `<topic>` never closed.
 
 ### Sections mode and combined chapter pages
 
