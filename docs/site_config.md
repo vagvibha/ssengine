@@ -82,7 +82,15 @@ one-item list), **mapping**.
 **`labels:`** — `home_title`, `home_nav_label`, `home_button_label`,
 `intro_nav_label`, `author_label`, `shloka_list_heading`,
 `references_heading`, `definitions_heading`, `term_column_heading`,
-`definition_column_heading`, `source_column_heading`.
+`definition_column_heading`, `source_column_heading`, `about_nav_label`
+(link text for the About page, default `विषये`).
+
+**About page** — optional. Put an `about.md` at the content root (next to
+`assets/`). It is copied to `docs/about.md` with the usual Home pill (any
+frontmatter is kept), and linked from one small line at the bottom of the
+home page (`<div class="sv-home-footer">`, style it in the site's own
+`custom.css` if wanted). It is not added to nav. No `about.md`, no page
+and no link.
 
 **`topics:`**
 

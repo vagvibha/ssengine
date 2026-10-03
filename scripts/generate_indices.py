@@ -86,13 +86,16 @@ What it does, in order:
     auto-generated (nav-less) detail page per meter/alankara, into
     `docs/` (source files are never modified).
 6.  Writes `docs/index.md` (home page, one card per content section, plus
-    one more for topics if configured).
+    one more for topics if configured). If `about.md` exists at the
+    content root, it is copied to `docs/about.md` (with the usual Home
+    pill) and linked from a single small line at the bottom of the home
+    page — deliberately NOT added to nav.
 7.  Writes `mkdocs.yml`, including an auto-generated `nav:` block.
 
 This script is idempotent: it always starts by deleting only the generated
 output directory contents for each configured section, the topics output
 directory (if configured), `docs/assets/` (a fresh mirror of `assets/` —
-see below), `docs/index.md`, and `mkdocs.yml` — never the hand-maintained
+see below), `docs/index.md`, `docs/about.md`, and `mkdocs.yml` — never the hand-maintained
 `docs/stylesheets/`, `docs/javascripts/`, or any source directory.
 
 Requires: PyYAML. beautifulsoup4 is only imported (lazily, inside
@@ -246,6 +249,7 @@ SITE_CONFIG_KEYS = {
 THEME_KEYS = {"primary": "str", "accent": "str", "language": "str"}
 LABEL_KEYS = {k: "str" for k in (
     "home_title", "home_nav_label", "home_button_label", "intro_nav_label", "author_label",
+    "about_nav_label",
     "shloka_list_heading", "references_heading", "definitions_heading",
     "term_column_heading", "definition_column_heading", "source_column_heading",
 )}
@@ -2687,6 +2691,29 @@ def render_topnav(
 ASSETS_SRC = CONTENT_ROOT / "assets"
 ASSETS_OUT = DOCS / "assets"
 
+# Optional hand-written About page: `about.md` at the content root (the
+# repo root unless content_root is set — same place as assets/). A one-off
+# page, so it's site chrome rather than content: copied to docs/about.md,
+# reachable only from a small footer line on the home page (see
+# build_home_page), never from nav or the topnav pill.
+ABOUT_SRC = CONTENT_ROOT / "about.md"
+ABOUT_REL = "about.md"
+
+
+def copy_about_page() -> bool:
+    """Writes docs/about.md from about.md (if present) with the Home pill
+    added after any frontmatter, which is kept verbatim so
+    {{ page.meta.* }} and xref() keep working. Returns whether it did."""
+    if not ABOUT_SRC.is_file():
+        return False
+    text = ABOUT_SRC.read_text(encoding="utf-8")
+    m = FRONTMATTER_RE.match(text)
+    head, body = (text[:m.end()], text[m.end():]) if m else ("", text)
+    if head and not head.endswith("\n"):
+        head += "\n"
+    write_md(DOCS / ABOUT_REL, head + render_topnav(ABOUT_REL, None, None) + "\n" + body.lstrip("\n"))
+    return True
+
 
 def clean_output():
     for section in SECTIONS:
@@ -2696,9 +2723,10 @@ def clean_output():
         shutil.rmtree(TOPICS_CONFIG.out_dir)
     if ASSETS_OUT.exists():
         shutil.rmtree(ASSETS_OUT)
-    index_md = DOCS / "index.md"
-    if index_md.exists():
-        index_md.unlink()
+    for name in ("index.md", ABOUT_REL):
+        out = DOCS / name
+        if out.exists():
+            out.unlink()
     DOCS.mkdir(parents=True, exist_ok=True)
 
 
@@ -3310,6 +3338,7 @@ def build_home_page(
     sections_with_texts: list[tuple[SectionConfig, list[Text]]],
     topic_categories: list["TopicCategory"],
     special_entries: list["NavListEntry"],
+    has_about: bool = False,
 ) -> str:
     home_title = site_label("home_title", "मुखपृष्ठम्")
     lines = [f"# {home_title}", "", '<div class="sv-home-cards" markdown="1">', ""]
@@ -3343,6 +3372,9 @@ def build_home_page(
 
     lines.append("</div>")
     lines.append("")
+    if has_about:
+        about_label = site_label("about_nav_label", "विषये")
+        lines += ['<div class="sv-home-footer" markdown="1">', "", f"[{about_label}]({ABOUT_REL})", "", "</div>", ""]
     return "\n".join(lines)
 
 
@@ -3527,6 +3559,7 @@ def main():
 
     clean_output()
     n_assets = copy_assets()
+    has_about = copy_about_page()
 
     topics: dict[str, RefPage] = {}
     chandas: dict[str, TableEntry] = {}
@@ -3636,7 +3669,7 @@ def main():
             write_md(entry.out_file, render_glossary_entry_page(entry))
 
     # --- home page ---------------------------------------------------------
-    write_md(DOCS / "index.md", build_home_page(sections_with_texts, topic_categories, special_entries))
+    write_md(DOCS / "index.md", build_home_page(sections_with_texts, topic_categories, special_entries, has_about))
 
     # --- mkdocs.yml (nav auto-generated, static settings preserved) -------
     nav = build_nav(sections_with_texts, topic_categories, special_entries)
