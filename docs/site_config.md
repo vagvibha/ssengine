@@ -75,6 +75,7 @@ one-item list), **mapping**.
 | `topics` | mapping | The topics area (see below). Omit if the site has no topics. |
 | `default_chapter_word` | text | Last-resort chapter nav word (default `अध्यायः`). |
 | `maintain_shloka_linebreak` | bool | Site default: keep each pada of a shloka on its own line (`<br />`). Default false. A book can override it. |
+| `skip_text_index` | bool | Site default for the book key of the same name (single-chapter books go straight to their chapter page). Default false. A book can override it. |
 | `dictionaries` | list of mappings | `{name, folder}` per dictionary. See [dict.md](dict.md#site-registry). |
 | `content_sections` | list of mappings | The top-level content areas (see below). |
 
@@ -175,6 +176,7 @@ dropping a container drops everything in it.
 | `maintain_shloka_linebreak` | bool | Overrides the site default. |
 | `shloka_toc` | bool | Default for whether shlokas are listed in a chapter's श्लोकसूची (default true). |
 | `dict` | mapping | Only `folder`. See [dict.md](dict.md#book-metayaml). |
+| `skip_text_index` | bool | Overrides the site default. Single-chapter books only (else a build error): no book index page. Links to the book go straight to its chapter page, whose H1 is just the book title and whose ⬆ goes to the section page. `author`/`header`/`chapters` are then unused. |
 
 ## Chapter `meta.yaml` (`<book>/<chapter>/meta.yaml`, optional)
 
@@ -260,6 +262,7 @@ at that level.
 | Wrapper for loose text | — | `default_class` | `default_class` | — | any explicit `<div>` / gloss tag |
 | Shloka listed in श्लोकसूची | (true) | `shloka_toc` | `shloka_toc` | — | `toc="true"` / `toc="false"` |
 | Keep shloka line breaks | `maintain_shloka_linebreak` | `maintain_shloka_linebreak` | — | — | — |
+| Skip the book index page | `skip_text_index` | `skip_text_index` | — | — | — |
 | Meter / figure | — | — | — | `chandas` / `alankara` | `data-chandas=` / `data-alankara=` |
 | Chapter nav label | `default_chapter_word` → section's `default_chapter_word` | `chapter_type` (+ number) | `chapter_name` | — | — |
 | Gloss type config | `gloss_types.yaml` | `gloss_types` (replaces the whole entry), `gloss_labels` (label only) | — | — | `toggle-hide="true"` / `"false"` |
@@ -270,6 +273,6 @@ Two details:
 - A book's `gloss_types:` entry replaces the site's entry for that type
   entirely — any key it leaves out (`boxed`, `hideable`, …) is unset, not
   inherited.
-- `shloka_toc` and `maintain_shloka_linebreak` count as set whenever the
+- `shloka_toc`, `maintain_shloka_linebreak` and `skip_text_index` count as set whenever the
   key is present, so `false` at the book level overrides a site-level
   `true`.

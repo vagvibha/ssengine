@@ -117,7 +117,8 @@ stays at the repo root:
                                   lives in site_config.yaml instead)
         <group>/                one directory per site_config.yaml text_groups: entry
             <slug>/
-                meta.yaml        title, author, default_shloka_type, default_class, order, ...
+                meta.yaml        title, author, default_shloka_type, default_class, order,
+                                 skip_text_index (1-chapter texts: no TOC page), ...
                 <chapter>/
                     meta.yaml    (optional) chapter_name
                     *.md         section files, concatenated in numeric order
@@ -240,7 +241,7 @@ SITE_CONFIG_KEYS = {
     "site_name": "str", "google_analytics_property": "str", "content_root": "str",
     "theme": "map", "labels": "map",
     "topics": "map", "default_chapter_word": "str", "maintain_shloka_linebreak": "bool",
-    "dictionaries": "maplist", "content_sections": "maplist",
+    "dictionaries": "maplist", "content_sections": "maplist", "skip_text_index": "bool",
 }
 THEME_KEYS = {"primary": "str", "accent": "str", "language": "str"}
 LABEL_KEYS = {k: "str" for k in (
@@ -273,6 +274,7 @@ BOOK_META_KEYS = {
     "default_shloka_type": "str", "default_class": "str",
     "gloss_types": "maplist", "gloss_labels": "map",
     "maintain_shloka_linebreak": "bool", "shloka_toc": "bool", "dict": "map",
+    "skip_text_index": "bool",
 }
 BOOK_DICT_KEYS = {"folder": "str"}
 CHAPTER_META_KEYS = {
@@ -926,6 +928,50 @@ class Text:
     def rel_out_dir(self) -> str:
         return f"{self.section.dir}/{self.group.dir_name}/{self.slug}"
 
+    @property
+    def skip_text_index(self) -> bool:
+        """`skip_text_index: true` in this text's meta.yaml — for a text
+        with exactly one chapter (checked in check_skip_text_index). No
+        text TOC page (<text>/index.md) is generated; every link to the
+        text (home card, section index, nav) goes straight to its one
+        chapter's own page, that chapter's "Up" goes to the section
+        index, and its H1 is just the text title (see
+        Chapter.display_title). The text's own meta.yaml wins if it sets
+        the key at all (true OR false); otherwise the site-wide default
+        in site_config.yaml (default false), e.g. for a site whose texts
+        are all single-chapter."""
+        if "skip_text_index" in self.meta:
+            return bool(self.meta["skip_text_index"])
+        return bool(SITE_CONFIG.get("skip_text_index", False))
+
+    @property
+    def landing_rel_file(self) -> str:
+        """The page every other page links to when it means "this text"
+        — the text TOC page, or the single chapter's own page under
+        skip_text_index."""
+        if self.skip_text_index:
+            return self.chapters[0].rel_out_file
+        return f"{self.rel_out_dir}/index.md"
+
+    @property
+    def up_target(self) -> tuple[str, str]:
+        """(rel_file, label) for the "Up" link on this text's chapter
+        entry pages — the text TOC page, or (under skip_text_index,
+        where there's none) the section index."""
+        if self.skip_text_index:
+            return f"{self.section.dir}/index.md", self.section.h1_label
+        return f"{self.rel_out_dir}/index.md", self.title
+
+
+def check_skip_text_index(text: "Text", where: object) -> None:
+    """skip_text_index only makes sense for a single-chapter text: with
+    more, the other chapters would have no TOC to be reached from."""
+    if text.skip_text_index and len(text.chapters) != 1:
+        raise ConfigError(
+            f"{where}: skip_text_index: true needs exactly one (non-ignored) chapter, "
+            f"found {len(text.chapters)}"
+        )
+
 
 class Chapter:
     def __init__(self, text: Text, slug: str, sections: list[Path], meta: dict | None = None):
@@ -1016,6 +1062,23 @@ class Chapter:
         if "shloka_toc" in self.text.meta:
             return bool(self.text.meta["shloka_toc"])
         return True
+
+    @property
+    def display_title(self) -> str:
+        """"<text> — <chapter>", used for this chapter's H1 and for the
+        labels of references back to it — just "<text>" under
+        skip_text_index, where the text has only this one chapter."""
+        if self.text.skip_text_index:
+            return self.text.title
+        return f"{self.text.title} — {self.nav_label}"
+
+    @property
+    def up_label(self) -> str:
+        """Label of the "Up" link back to this chapter's landing page from
+        its section pages / full_chapter_label page — the text title
+        under skip_text_index, since the chapter label shows nowhere
+        else there."""
+        return self.text.title if self.text.skip_text_index else self.nav_label
 
     @property
     def nav_label(self) -> str:
@@ -1220,7 +1283,7 @@ class Reference:
 
     @property
     def label(self) -> str:
-        base = f"{self.chapter.text.title} — {self.chapter.nav_label}"
+        base = self.chapter.display_title
         return f"{base} — {self.section_title}" if self.section_title else base
 
 
@@ -1734,7 +1797,7 @@ def process_topic_tags(
     stack: list[tuple[int, int, str]] = []  # (start, end, attrs_str) of the open paired <topic>
 
     def def_label() -> str:
-        base = f"{chapter.text.title} — {chapter.nav_label}"
+        base = chapter.display_title
         return f"{base} — {section_title}" if section_title else base
 
     def fail(msg: str) -> None:
@@ -2767,8 +2830,7 @@ def build_domain_index_page(section: SectionConfig, texts: list[Text]) -> str:
         lines.append(f"## {group.h2_label}")
         lines.append("")
         for t in texts_in_group:
-            target = f"{t.rel_out_dir}/index.md"
-            lines.append(f"- [{t.title}]({rel_link(rel_file, target)})")
+            lines.append(f"- [{t.title}]({rel_link(rel_file, t.landing_rel_file)})")
         lines.append("")
     return "\n".join(lines)
 
@@ -2964,17 +3026,17 @@ def render_chapter_full(
     if topnav_override is not None:
         topnav = topnav_override
     else:
-        up_target = f"{chapter.text.rel_out_dir}/index.md"
+        up_target, up_label = chapter.text.up_target
         siblings = chapter.text.chapters
         idx = siblings.index(chapter)
         prev_ch = siblings[idx - 1] if idx > 0 else None
         next_ch = siblings[idx + 1] if idx < len(siblings) - 1 else None
         topnav = render_topnav(
-            current_rel_file, up_target, chapter.text.title,
+            current_rel_file, up_target, up_label,
             prev_target_rel_file=prev_ch.rel_out_file if prev_ch else None,
             next_target_rel_file=next_ch.rel_out_file if next_ch else None,
         )
-    title_line = f"# {chapter.text.title} — {chapter.nav_label}"
+    title_line = f"# {chapter.display_title}"
     table_lines = build_shloka_table(current_rel_file, all_shlokas, chandas, alankaras)
     content = "\n".join([topnav, title_line, ""] + body_parts + [""] + table_lines) + "\n"
     return content, all_shlokas
@@ -3030,7 +3092,7 @@ def render_chapter_sections(
     (there's no single "the" chapter page to hand back to the caller) and
     records shloka/topic references against each section's own page, not
     the chapter's landing page — see Reference."""
-    up_target = f"{chapter.text.rel_out_dir}/index.md"
+    up_target, up_label = chapter.text.up_target
     siblings = chapter.text.chapters
     idx = siblings.index(chapter)
     prev_ch = siblings[idx - 1] if idx > 0 else None
@@ -3080,11 +3142,11 @@ def render_chapter_sections(
         prev_sec = chapter.sections[i - 1] if i > 0 else None
         next_sec = chapter.sections[i + 1] if i < len(chapter.sections) - 1 else None
         topnav = render_topnav(
-            section_rel_file, chapter.rel_out_file, chapter.nav_label,
+            section_rel_file, chapter.rel_out_file, chapter.up_label,
             prev_target_rel_file=chapter.section_rel_out_file(prev_sec) if prev_sec else None,
             next_target_rel_file=chapter.section_rel_out_file(next_sec) if next_sec else None,
         )
-        title_line = f"# {chapter.text.title} — {chapter.nav_label} — {display_title}"
+        title_line = f"# {chapter.display_title} — {display_title}"
         table_lines = build_shloka_table(section_rel_file, shlokas, chandas, alankaras)
         content = "\n".join(
             [topnav, title_line, ""] + [f'<div id="sec1"></div>\n\n{body.strip()}'] + [""] + table_lines
@@ -3093,7 +3155,7 @@ def render_chapter_sections(
 
     if chapter.full_chapter_label:
         full_rel_file = chapter.full_chapter_rel_out_file
-        full_topnav = render_topnav(full_rel_file, chapter.rel_out_file, chapter.nav_label)
+        full_topnav = render_topnav(full_rel_file, chapter.rel_out_file, chapter.up_label)
         full_content, _ = render_chapter_full(
             chapter, topics, chandas, alankaras, definitions,
             current_rel_file=full_rel_file, topnav_override=full_topnav, primary=False,
@@ -3102,11 +3164,11 @@ def render_chapter_sections(
         toc_entries.insert(0, (chapter.full_chapter_label, full_rel_file))
 
     topnav = render_topnav(
-        chapter.rel_out_file, up_target, chapter.text.title,
+        chapter.rel_out_file, up_target, up_label,
         prev_target_rel_file=prev_ch.rel_out_file if prev_ch else None,
         next_target_rel_file=next_ch.rel_out_file if next_ch else None,
     )
-    lines = [topnav, f"# {chapter.text.title} — {chapter.nav_label}", ""]
+    lines = [topnav, f"# {chapter.display_title}", ""]
     for display_title, section_rel_file in toc_entries:
         lines.append(f"- [{display_title}]({rel_link(chapter.rel_out_file, section_rel_file)})")
     lines.append("")
@@ -3261,7 +3323,7 @@ def build_home_page(
             lines.append(f"### {group.h2_label}")
             lines.append("")
             for t in texts_in_group:
-                lines.append(f"- [{t.title}]({t.rel_out_dir}/index.md)")
+                lines.append(f"- [{t.title}]({t.landing_rel_file})")
             lines.append("")
         lines.append("</div>")
         lines.append("")
@@ -3426,6 +3488,8 @@ def build_nav(
     special_entries: list["NavListEntry"],
 ) -> list:
     def text_nav(t: Text):
+        if t.skip_text_index:
+            return {t.title: t.landing_rel_file}
         entry = [{site_label("intro_nav_label", "परिचयः"): f"{t.rel_out_dir}/index.md"}]
         for ch in t.chapters:
             entry.append({ch.nav_label: ch.rel_out_file})
@@ -3517,6 +3581,7 @@ def main():
         texts = discover_texts(section)
         for t in texts:
             t.chapters = discover_chapters(t)
+            check_skip_text_index(t, find_meta_file(t.dir))
         sections_with_texts.append((section, texts))
 
     # --- render chapters + text index pages for every section ------------
@@ -3529,7 +3594,8 @@ def main():
         for t in texts:
             for ch in t.chapters:
                 process_chapter(ch, topics, chandas, alankaras, definitions)
-            write_md(t.out_dir / "index.md", build_text_index_page(t))
+            if not t.skip_text_index:
+                write_md(t.out_dir / "index.md", build_text_index_page(t))
 
         write_md(DOCS / f"{section.dir}/index.md", build_domain_index_page(section, texts))
 
