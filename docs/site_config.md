@@ -192,11 +192,50 @@ dropping a container drops everything in it.
 |---|---|---|
 | `chapter_name` | text | Nav label (else `chapter_type`/section word + number). |
 | `chapter_display_style` | text | `full_chapter` (default: one page) or `sections` (a landing page plus a page per `.md` file). |
+| `toc` | list | `sections` mode only: group the landing page's list under headings. See below. |
 | `ignore` | bool | Skip this chapter entirely (site and dictionary). |
 | `default_shloka_type` | text | Overrides the book's. |
 | `default_class` | text | Overrides the book's. |
 | `shloka_toc` | bool | Overrides the book's. |
 | `dict` | mapping | Makes the chapter dictionary-enabled. See [dict.md](dict.md#chapter-metayaml). |
+
+### Chapter `toc:`
+
+In a `sections`-mode chapter, `toc:` lays out the landing page as a
+nested list. Each entry is either a section file or a heading with
+entries of its own, at any depth; files can sit at any level, including
+the top:
+
+```yaml
+chapter_display_style: sections
+toc:
+  - file: 00            # the file's name, with or without .md
+  - title: ध्वनेः स्वरूपम्
+    children:
+      - title: अभाववादः
+        children:
+          - file: 01
+          - file: 02
+      - file: 03
+  - file: 04
+```
+
+Headings are plain text (`<strong class="sv-toc-heading">`, not links);
+files link to their pages under their usual title. The build fails
+unless:
+
+- every entry is exactly one of `file:` or `title:` + `children:`;
+- every heading has at least one child;
+- every section file is listed exactly once, and every listed file
+  exists;
+- the files appear in **filename order**. That is the chapter's reading
+  order everywhere (← → arrows, `full_chapter` mode, the dictionary), so
+  to move a file, rename it.
+
+A listed file with `ignore: true` is skipped, and so is a heading left
+empty because of that. In `full_chapter` mode `toc:` is ignored (only
+its shape is checked), so a chapter can switch between the two modes
+freely.
 
 ## Topic category `meta.yaml` (`topics/<category>/meta.yaml`)
 

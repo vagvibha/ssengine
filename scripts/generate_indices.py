@@ -282,7 +282,7 @@ BOOK_META_KEYS = {
 }
 BOOK_DICT_KEYS = {"folder": "str"}
 CHAPTER_META_KEYS = {
-    "chapter_name": "str", "chapter_display_style": "str", "ignore": "bool",
+    "chapter_name": "str", "chapter_display_style": "str", "toc": "maplist", "ignore": "bool",
     "default_shloka_type": "str", "default_class": "str", "shloka_toc": "bool", "dict": "map",
 }
 CHAPTER_DICT_KEYS = {
@@ -375,6 +375,42 @@ def validate_book_meta(meta: dict, where: object) -> None:
 
 CHAPTER_DISPLAY_STYLES = ("full_chapter", "sections")
 
+# A chapter's `toc:` (sections mode only): a list whose entries are each
+# either a section file or a heading with nested entries of its own, e.g.
+#   toc:
+#     - title: T1
+#       children:
+#         - file: 01
+#         - file: 02
+#     - file: 03
+TOC_FILE_KEYS = {"file": "str"}
+TOC_HEADING_KEYS = {"title": "str", "children": "maplist"}
+
+
+def validate_chapter_toc(entries: list, where: str) -> None:
+    """Shape-only check of a `toc:` list (which files exist is checked
+    later, against the chapter's sections — see resolve_chapter_toc):
+    every entry is exactly one of `{file}` or `{title, children}`, with
+    nothing empty."""
+    if not entries:
+        raise ConfigError(f"{where}: is empty — list the chapter's files and headings, or remove it")
+    for i, entry in enumerate(entries):
+        at = f"{where}[{i}]"
+        if isinstance(entry, dict) and "file" in entry:
+            check_keys(entry, TOC_FILE_KEYS, at)
+            if not str(entry.get("file") or "").strip():
+                raise ConfigError(f"{at}: file is empty")
+            continue
+        if not isinstance(entry, dict) or "title" not in entry:
+            raise ConfigError(f"{at}: each toc entry needs either 'file:' or 'title:' (with 'children:'), got {entry!r}")
+        check_keys(entry, TOC_HEADING_KEYS, at)
+        title = str(entry.get("title") or "").strip()
+        if not title:
+            raise ConfigError(f"{at}: title is empty")
+        if not entry.get("children"):
+            raise ConfigError(f"{at}: heading '{title}' has no children — every heading needs at least one entry")
+        validate_chapter_toc(entry["children"], f"{at}.children")
+
 
 def validate_chapter_meta(meta: dict, where: object) -> None:
     check_keys(meta, CHAPTER_META_KEYS, where)
@@ -382,6 +418,8 @@ def validate_chapter_meta(meta: dict, where: object) -> None:
     style = str(meta.get("chapter_display_style") or "").strip()
     if style and style not in CHAPTER_DISPLAY_STYLES:
         raise ConfigError(f"{where}: unknown chapter_display_style '{style}' — expected 'full_chapter' or 'sections'")
+    if meta.get("toc") is not None:
+        validate_chapter_toc(meta["toc"], f"{where}: toc")
 
 
 SITE_CONFIG = load_yaml(SITE_CONFIG_PATH)
@@ -983,6 +1021,8 @@ class Chapter:
         self.slug = slug
         self.sections = sections  # list of source .md Paths, in order
         self.meta = meta or {}
+        # sections mode with a `toc:` only — see resolve_chapter_toc
+        self.toc: list["TocEntry"] | None = None
 
     @property
     def display_style(self) -> str:
@@ -1119,6 +1159,67 @@ def discover_texts(section: SectionConfig) -> list[Text]:
     return texts
 
 
+class TocEntry:
+    """One resolved entry of a chapter's `toc:` — a section file
+    (`section` set) or a heading (`title` + `children`)."""
+    def __init__(self, section: Path | None = None, title: str = "", children: list["TocEntry"] | None = None):
+        self.section = section
+        self.title = title
+        self.children = children or []
+
+
+def resolve_chapter_toc(
+    entries: list, sections: list[Path], ignored_stems: set[str], where: str,
+) -> list[TocEntry]:
+    """Checks a (shape-validated) `toc:` against the chapter's actual
+    section files and returns it resolved. `file:` is the file's name with
+    or without `.md`. Fails the build unless every section is listed
+    exactly once, every listed file exists, and the files appear in the
+    same order as their filenames — filename order is the chapter's one
+    reading order (prev/next arrows, full_chapter mode, dict), so the toc
+    can't silently disagree with it. A listed file that has `ignore: true`
+    is skipped, as is a heading left with nothing under it because of
+    that (so ignoring a draft doesn't also mean editing the toc)."""
+    by_stem = {s.stem: s for s in sections}
+    listed: list[str] = []
+
+    def walk(items: list) -> list[TocEntry]:
+        out: list[TocEntry] = []
+        for item in items:
+            if "file" in item:
+                stem = str(item["file"]).strip()
+                stem = stem[:-3] if stem.endswith(".md") else stem
+                if stem in listed:
+                    raise ConfigError(f"{where}: file '{stem}' is listed more than once")
+                if stem in ignored_stems:
+                    listed.append(stem)
+                    continue
+                if stem not in by_stem:
+                    raise ConfigError(
+                        f"{where}: file '{stem}' — no such section in this chapter "
+                        f"(its files are: {', '.join(by_stem)})")
+                listed.append(stem)
+                out.append(TocEntry(section=by_stem[stem]))
+            else:
+                children = walk(item["children"])
+                if children:
+                    out.append(TocEntry(title=str(item["title"]).strip(), children=children))
+        return out
+
+    resolved = walk(entries)
+    missing = [s for s in by_stem if s not in listed]
+    if missing:
+        raise ConfigError(f"{where}: doesn't list {', '.join(m + '.md' for m in missing)} — every section must appear once")
+    toc_order = [s for s in listed if s in by_stem]
+    file_order = list(by_stem)
+    if toc_order != file_order:
+        raise ConfigError(
+            f"{where}: lists the files in a different order than their filenames "
+            f"(toc: {', '.join(toc_order)}; filenames: {', '.join(file_order)}). Filename order is the "
+            f"reading order (prev/next, full_chapter mode, dict) — rename the files or reorder the toc.")
+    return resolved
+
+
 def discover_chapters(text: Text) -> list[Chapter]:
     """A chapter is either a subdirectory of section files, or (if no
     directory of the same name exists) a single top-level .md file. A
@@ -1134,16 +1235,23 @@ def discover_chapters(text: Text) -> list[Chapter]:
             print(f"Skipping {d} (ignore: true in meta.yaml)")
             continue
         sections = []
+        ignored_stems: set[str] = set()
         for f in sorted(d.glob("*.md"), key=lambda f: f.stem):
             fm, _ = split_frontmatter(f.read_text(encoding="utf-8"))
             if fm.get("ignore"):
                 print(f"Skipping {f} (ignore: true in frontmatter)")
+                ignored_stems.add(f.stem)
                 continue
             sections.append(f)
         if not sections:
             warn(f"chapter directory {d} contains no .md sections — skipping")
             continue
-        chapters.append(Chapter(text, name, sections, chapter_meta))
+        chapter = Chapter(text, name, sections, chapter_meta)
+        if chapter.display_style == "sections" and chapter_meta.get("toc") is not None:
+            chapter.toc = resolve_chapter_toc(
+                chapter_meta["toc"], sections, ignored_stems, f"{find_meta_file(d) or d}: toc",
+            )
+        chapters.append(chapter)
 
     for f in text.dir.glob("*.md"):
         if f.stem in dir_children:
@@ -3132,10 +3240,32 @@ def render_chapter_sections(
         next_target_rel_file=next_ch.rel_out_file if next_ch else None,
     )
     lines = [topnav, f"# {chapter.display_title}", ""]
-    for display_title, section_rel_file in toc_entries:
-        lines.append(f"- [{display_title}]({rel_link(chapter.rel_out_file, section_rel_file)})")
+    if chapter.toc is None:
+        for display_title, section_rel_file in toc_entries:
+            lines.append(f"- [{display_title}]({rel_link(chapter.rel_out_file, section_rel_file)})")
+    else:
+        titles = {rel: title for title, rel in toc_entries}
+        lines += render_chapter_toc(chapter, chapter.toc, titles, 0)
     lines.append("")
     write_md(chapter.out_file, "\n".join(lines))
+
+
+def render_chapter_toc(chapter: Chapter, entries: list[TocEntry], titles: dict[str, str], depth: int) -> list[str]:
+    """A sections-mode chapter's `toc:` as a nested Markdown list: a
+    heading is plain (unlinked) text in <strong class="sv-toc-heading">,
+    a file links to its section page under its usual title (see
+    section_display_title). Nested levels are indented four spaces, as
+    Python-Markdown requires."""
+    pad = "    " * depth
+    lines: list[str] = []
+    for e in entries:
+        if e.section is not None:
+            rel = chapter.section_rel_out_file(e.section)
+            lines.append(f"{pad}- [{titles[rel]}]({rel_link(chapter.rel_out_file, rel)})")
+        else:
+            lines.append(f'{pad}- <strong class="sv-toc-heading">{html.escape(e.title)}</strong>')
+            lines += render_chapter_toc(chapter, e.children, titles, depth + 1)
+    return lines
 
 
 def process_chapter(
