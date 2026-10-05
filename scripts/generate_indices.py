@@ -277,13 +277,14 @@ BOOK_META_KEYS = {
     "header": "str", "chapters": "str", "chapter_type": "str",
     "default_shloka_type": "str", "default_class": "str",
     "gloss_types": "maplist", "gloss_labels": "map",
-    "maintain_shloka_linebreak": "bool", "shloka_toc": "bool", "dict": "map",
+    "maintain_shloka_linebreak": "bool", "shloka_toc": "bool", "shloka_highlight": "bool", "dict": "map",
     "skip_text_index": "bool",
 }
 BOOK_DICT_KEYS = {"folder": "str"}
 CHAPTER_META_KEYS = {
     "chapter_name": "str", "chapter_display_style": "str", "toc": "maplist", "ignore": "bool",
-    "default_shloka_type": "str", "default_class": "str", "shloka_toc": "bool", "dict": "map",
+    "default_shloka_type": "str", "default_class": "str", "shloka_toc": "bool",
+    "shloka_highlight": "bool", "dict": "map",
 }
 CHAPTER_DICT_KEYS = {
     "type": "str", "title": "str", "skip": "list", "auto_shloka": "bool",
@@ -1088,6 +1089,19 @@ class Chapter:
         if "shloka_toc" in self.text.meta:
             return bool(self.text.meta["shloka_toc"])
         return True
+
+    @property
+    def shloka_highlight_default(self) -> bool:
+        """Whether every shloka in this chapter gets highlight="true" by
+        default — `shloka_highlight:` in this chapter's own meta.yaml
+        wins if set at all, else the text's own meta.yaml, else False.
+        A shloka div's own highlight="true"/"false" always wins (see
+        extract_shlokas)."""
+        if "shloka_highlight" in self.meta:
+            return bool(self.meta["shloka_highlight"])
+        if "shloka_highlight" in self.text.meta:
+            return bool(self.text.meta["shloka_highlight"])
+        return False
 
     @property
     def display_title(self) -> str:
@@ -2165,6 +2179,7 @@ def inject_shloka_linebreaks(inner: str) -> str:
 def extract_shlokas(
     body: str, fm_chandas: str, fm_alankaras: list[str], default_shloka_type: str, start_index: int = 0,
     source_for_warning: object = "", maintain_linebreak: bool = False, shloka_toc_default: bool = True,
+    shloka_highlight_default: bool = False,
 ) -> tuple[str, list[Shloka], int]:
     """Find every <div class="shloka"> in `body` at any nesting depth,
     inject an id="..." attribute for the Shloka Table to link to (see
@@ -2212,7 +2227,8 @@ def extract_shlokas(
                 if attrs.get("data-alankara")
                 else list(fm_alankaras)
             )
-            highlight = attrs.get("highlight", "").strip().lower() == "true"
+            hl_attr = attrs.get("highlight", "").strip().lower()
+            highlight = shloka_highlight_default if hl_attr not in ("true", "false") else (hl_attr == "true")
             toc_attr = attrs.get("toc", "").strip().lower()
             toc = shloka_toc_default if toc_attr not in ("true", "false") else (toc_attr == "true")
 
@@ -2235,6 +2251,10 @@ def extract_shlokas(
             if data_type and not attrs.get("data-type", "").strip():
                 # inject the resolved default right before the tag's closing '>'
                 splices.append((node.tag_end - 1, node.tag_end - 1, f' data-type="{data_type}"'))
+            # chapter/text-level shloka_highlight: default — injected as a real
+            # attribute so custom.css's .shloka[highlight="true"] applies unchanged
+            if highlight and hl_attr != "true":
+                splices.append((node.tag_end - 1, node.tag_end - 1, ' highlight="true"'))
             # a shloka div is a leaf for our purposes — don't recurse into it
 
     visit(tree)
@@ -3106,6 +3126,7 @@ def render_chapter_full(
             body, fm_chandas, as_list(fm.get("alankara")), chapter.default_shloka_type,
             shloka_counter, source_for_warning=section, maintain_linebreak=chapter.text.maintain_shloka_linebreak,
             shloka_toc_default=chapter.shloka_toc_default,
+            shloka_highlight_default=chapter.shloka_highlight_default,
         )
         for sh in shlokas:
             if sh.chandas and sh.chandas not in chandas:
@@ -3208,6 +3229,7 @@ def render_chapter_sections(
             body, fm_chandas, as_list(fm.get("alankara")), chapter.default_shloka_type,
             0, source_for_warning=section, maintain_linebreak=chapter.text.maintain_shloka_linebreak,
             shloka_toc_default=chapter.shloka_toc_default,
+            shloka_highlight_default=chapter.shloka_highlight_default,
         )
         for sh in shlokas:
             if sh.chandas and sh.chandas not in chandas:
