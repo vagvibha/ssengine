@@ -192,7 +192,6 @@ dropping a container drops everything in it.
 |---|---|---|
 | `chapter_name` | text | Nav label (else `chapter_type`/section word + number). |
 | `chapter_display_style` | text | `full_chapter` (default: one page) or `sections` (a landing page plus a page per `.md` file). |
-| `full_chapter_label` | text | `sections` mode only: also generate a whole-chapter page, listed under this label. |
 | `ignore` | bool | Skip this chapter entirely (site and dictionary). |
 | `default_shloka_type` | text | Overrides the book's. |
 | `default_class` | text | Overrides the book's. |

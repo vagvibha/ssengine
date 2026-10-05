@@ -293,12 +293,10 @@ and the tag in the message:
 - a `<topic>` opened inside another, a `</topic>` with no opening tag,
   or a `<topic>` never closed.
 
-### Sections mode and combined chapter pages
+### Sections mode
 
 In a `sections`-mode chapter, each back-link points to the section's
-own page, and its label includes the section's `title`. If the chapter
-also has a `full_chapter_label` page, tags on that combined page still
-get anchors and ↗ links, but don't add rows or lines a second time.
+own page, and its label includes the section's `title`.
 
 ### Warnings
 

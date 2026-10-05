@@ -59,6 +59,9 @@ def _run_both(site):
      "title should be plain text"),
     (lambda t: t["kavya/padya/ka"]["chapters"]["01"]["meta"].update(chapter_display_style="section"),
      "unknown chapter_display_style 'section'"),
+    # removed option: a leftover setting fails rather than being silently ignored
+    (lambda t: t["kavya/padya/ka"]["chapters"]["01"]["meta"].update(full_chapter_label="सर्वम्"),
+     "unknown key(s) 'full_chapter_label'"),
     (lambda t: t["kavya/padya/ka"]["meta"].update(order="first"), "'order: 'first'' isn't a number"),
     (lambda t: t["kavya/padya/ka"]["meta"].update(gloss_labels={"notez": "x"}),
      "gloss_labels: references unknown gloss type 'notez'"),

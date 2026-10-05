@@ -282,7 +282,7 @@ BOOK_META_KEYS = {
 }
 BOOK_DICT_KEYS = {"folder": "str"}
 CHAPTER_META_KEYS = {
-    "chapter_name": "str", "chapter_display_style": "str", "full_chapter_label": "str", "ignore": "bool",
+    "chapter_name": "str", "chapter_display_style": "str", "ignore": "bool",
     "default_shloka_type": "str", "default_class": "str", "shloka_toc": "bool", "dict": "map",
 }
 CHAPTER_DICT_KEYS = {
@@ -1016,24 +1016,6 @@ class Chapter:
         return f"{self.text.rel_out_dir}/{self.slug}/{section.stem}.md"
 
     @property
-    def full_chapter_label(self) -> str | None:
-        """Only relevant in `chapter_display_style: sections` —
-        `full_chapter_label:` in this chapter's own meta.yaml. If set, an
-        extra "whole chapter on one page" reading view is generated
-        alongside the per-section pages (see render_chapter_sections) and
-        listed first on the chapter's landing/TOC page, under this exact
-        text. Unset/blank (the default) means no such page is generated —
-        sections mode shows only the per-section list, as before."""
-        label = self.meta.get("full_chapter_label")
-        return str(label).strip() or None if label else None
-
-    @property
-    def full_chapter_rel_out_file(self) -> str:
-        """Only meaningful when full_chapter_label is set — the combined
-        reading-view page generated alongside the per-section pages."""
-        return f"{self.text.rel_out_dir}/{self.slug}/full.md"
-
-    @property
     def default_shloka_type(self) -> str:
         """Value that fills in `data-type=` on a bare `<div class="shloka">`
         (one that doesn't already carry its own data-type=) — the
@@ -1079,7 +1061,7 @@ class Chapter:
     @property
     def up_label(self) -> str:
         """Label of the "Up" link back to this chapter's landing page from
-        its section pages / full_chapter_label page — the text title
+        its section pages — the text title
         under skip_text_index, since the chapter label shows nowhere
         else there."""
         return self.text.title if self.text.skip_text_index else self.nav_label
@@ -1736,7 +1718,7 @@ def process_topic_tags(
     definitions: dict[str, list[TopicDefinition]],
     page_rel_out_file: str, section_title: str | None, start_index: int,
     seen_ref_labels: dict[str, set[str]],
-    source_for_warning: object = "", primary: bool = True,
+    source_for_warning: object = "",
 ) -> tuple[str, int]:
     """Scans `body` for `<topic>` tags, in two forms, and adds what each
     one says to its topic page(s):
@@ -1785,9 +1767,7 @@ def process_topic_tags(
 
     `seen_ref_labels` (topic name -> the set of सन्दर्भाः labels already
     added for THAT topic IN THIS CHAPTER) drops a repeated reference with
-    the same label. `primary=False` (a second rendering of the same
-    content, e.g. a combined full-chapter page) still checks every tag and
-    writes anchors/jump-links, but adds no rows a second time.
+    the same label.
     """
     tokens: list[tuple[int, int, str, str, bool]] = []
     for m in TOPIC_OPEN_RE.finditer(body):
@@ -1870,8 +1850,6 @@ def process_topic_tags(
         if kind == "open" and self_closing:
             splices.append((start, end, ""))  # never shows anything on the page
             names, _, def_html, label = resolve(attrs_str, None)
-            if not primary:
-                continue
             term = (parse_attrs(attrs_str).get("define") or "").strip()
             if def_html:
                 for n in names:
@@ -1904,8 +1882,6 @@ def process_topic_tags(
         )
         splices.append((o_start, o_end, f'<span id="{anchor}">'))
         splices.append((start, end, f'</span>{jump_link}'))
-        if not primary:
-            continue
         if label:
             add_reference(names, label, anchor)
         if def_html:
@@ -2982,10 +2958,6 @@ def build_shloka_table(
 def render_chapter_full(
     chapter: Chapter, topics: dict[str, RefPage], chandas: dict[str, "TableEntry"], alankaras: dict[str, "TableEntry"],
     definitions: dict[str, list[TopicDefinition]],
-    *,
-    current_rel_file: str | None = None,
-    topnav_override: str | None = None,
-    primary: bool = True,
 ) -> tuple[str, list[Shloka]]:
     """Returns (rendered_markdown, all_shlokas_in_anchor_order). The
     `chapter_display_style: full_chapter` (default, and only historical)
@@ -2998,21 +2970,8 @@ def render_chapter_full(
     paragraph-level back-links/jump-links, not a whole-section
     declaration), shlokas are numbered contiguously chapter-wide, and a
     श्लोकसूची table (see build_shloka_table) is appended whenever the
-    chapter has any shlokas at all.
-
-    The keyword-only params exist for exactly one other caller —
-    render_chapter_sections's `full_chapter_label:` companion page, which
-    reuses this same rendering (same anchor numbering, same shloka table)
-    at a different URL (chapter.full_chapter_rel_out_file, not
-    chapter.rel_out_file — the landing/TOC page there is a separate,
-    already-written file), with its own topnav (Home + up-to-chapter-TOC
-    only, no chapter-level prev/next — see render_chapter_sections).
-    `primary=False` marks that call as a secondary reading view of
-    content already fully processed once for the per-section pages: it
-    skips re-registering topic back-references/definitions and
-    re-emitting warnings already reported during that per-section pass,
-    without needing three separate flags to say so."""
-    current_rel_file = current_rel_file or chapter.rel_out_file
+    chapter has any shlokas at all."""
+    current_rel_file = chapter.rel_out_file
     body_parts = []
     all_shlokas: list[Shloka] = []
     shloka_counter = 0
@@ -3022,14 +2981,14 @@ def render_chapter_full(
         raw = section.read_text(encoding="utf-8")
         fm, body = split_frontmatter(raw)
         body = expand_gloss_shorthand(
-            body, chapter.text.effective_gloss_types, source_for_warning=section, warn_enabled=primary,
+            body, chapter.text.effective_gloss_types, source_for_warning=section,
         )
         body = strip_excluded_glosses(body, chapter.text.effective_gloss_types)
         body, _dict_captures = dict_extract.extract_dict_and_ref_tags(body, source_for_warning=section)
         anchor = f"sec{i+1}"
         body, topic_tag_counter = process_topic_tags(
             body, chapter, topics, definitions, current_rel_file, None, topic_tag_counter,
-            seen_ref_labels, source_for_warning=section, primary=primary,
+            seen_ref_labels, source_for_warning=section,
         )
         body = process_content_sections(
             body, chapter.default_class, chapter.text.effective_gloss_types, source_for_warning=section,
@@ -3042,28 +3001,23 @@ def render_chapter_full(
         )
         for sh in shlokas:
             if sh.chandas and sh.chandas not in chandas:
-                if primary:
-                    warn(f"{section} references unknown meter '{sh.chandas}' (no data-glossary-entry row for it in the chandas glossary)")
+                warn(f"{section} references unknown meter '{sh.chandas}' (no data-glossary-entry row for it in the chandas glossary)")
             for a in sh.alankaras:
                 if a not in alankaras:
-                    if primary:
-                        warn(f"{section} references unknown alankara '{a}' (no data-glossary-entry row for it in the alankara glossary)")
+                    warn(f"{section} references unknown alankara '{a}' (no data-glossary-entry row for it in the alankara glossary)")
         all_shlokas.extend(shlokas)
         body_parts.append(f'<div id="{anchor}"></div>\n\n{body.strip()}')
 
-    if topnav_override is not None:
-        topnav = topnav_override
-    else:
-        up_target, up_label = chapter.text.up_target
-        siblings = chapter.text.chapters
-        idx = siblings.index(chapter)
-        prev_ch = siblings[idx - 1] if idx > 0 else None
-        next_ch = siblings[idx + 1] if idx < len(siblings) - 1 else None
-        topnav = render_topnav(
-            current_rel_file, up_target, up_label,
-            prev_target_rel_file=prev_ch.rel_out_file if prev_ch else None,
-            next_target_rel_file=next_ch.rel_out_file if next_ch else None,
-        )
+    up_target, up_label = chapter.text.up_target
+    siblings = chapter.text.chapters
+    idx = siblings.index(chapter)
+    prev_ch = siblings[idx - 1] if idx > 0 else None
+    next_ch = siblings[idx + 1] if idx < len(siblings) - 1 else None
+    topnav = render_topnav(
+        current_rel_file, up_target, up_label,
+        prev_target_rel_file=prev_ch.rel_out_file if prev_ch else None,
+        next_target_rel_file=next_ch.rel_out_file if next_ch else None,
+    )
     title_line = f"# {chapter.display_title}"
     table_lines = build_shloka_table(current_rel_file, all_shlokas, chandas, alankaras)
     content = "\n".join([topnav, title_line, ""] + body_parts + [""] + table_lines) + "\n"
@@ -3106,16 +3060,7 @@ def render_chapter_sections(
     chapter landing/TOC page (chapter.out_file == chapter.rel_out_file)
     listing the chapter itself followed by each section (title from that
     section's own `title:` frontmatter, or its filename if absent — see
-    section_display_title), each linking to its page. If
-    `full_chapter_label:` is set in this chapter's meta.yaml, an extra
-    page combining every section (via render_chapter_full — same
-    rendering as full_chapter mode, own topnav, no chapter-level
-    prev/next since there's nothing chapter-level to page between here)
-    is generated at chapter.full_chapter_rel_out_file and listed FIRST on
-    the landing/TOC page, under that label — a secondary reading view
-    (`primary=False`), so it deliberately does not re-register topic
-    back-references/definitions or re-emit warnings already reported for
-    the same content while building the per-section pages. Unlike
+    section_display_title), each linking to its page. Unlike
     render_chapter_full, this writes its own output files directly
     (there's no single "the" chapter page to hand back to the caller) and
     records shloka/topic references against each section's own page, not
@@ -3144,7 +3089,7 @@ def render_chapter_sections(
 
         body, _ = process_topic_tags(
             body, chapter, topics, definitions, section_rel_file, display_title, 0,
-            seen_ref_labels, source_for_warning=section, primary=True,
+            seen_ref_labels, source_for_warning=section,
         )
 
         body = process_content_sections(
@@ -3180,16 +3125,6 @@ def render_chapter_sections(
             [topnav, title_line, ""] + [f'<div id="sec1"></div>\n\n{body.strip()}'] + [""] + table_lines
         ) + "\n"
         write_md(DOCS / section_rel_file, content)
-
-    if chapter.full_chapter_label:
-        full_rel_file = chapter.full_chapter_rel_out_file
-        full_topnav = render_topnav(full_rel_file, chapter.rel_out_file, chapter.up_label)
-        full_content, _ = render_chapter_full(
-            chapter, topics, chandas, alankaras, definitions,
-            current_rel_file=full_rel_file, topnav_override=full_topnav, primary=False,
-        )
-        write_md(DOCS / full_rel_file, full_content)
-        toc_entries.insert(0, (chapter.full_chapter_label, full_rel_file))
 
     topnav = render_topnav(
         chapter.rel_out_file, up_target, up_label,
