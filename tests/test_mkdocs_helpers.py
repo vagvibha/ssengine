@@ -4,7 +4,7 @@ from types import SimpleNamespace
 import pytest
 
 import macros_env
-from mkdocs_hooks import devanagari_safe_slugify, on_config
+from mkdocs_hooks import devanagari_safe_slugify, expand_superscript_shorthand, on_config, on_page_markdown
 
 
 @pytest.mark.parametrize("heading,slug", [
@@ -41,3 +41,19 @@ def make_xref(src_uri):
 ])
 def test_xref(src_uri, target, expected):
     assert make_xref(src_uri)(target) == expected
+
+
+@pytest.mark.parametrize("src,expected", [
+    ("सुखं^१ नित्यं^२ स्वप्रकाशं", "सुखं<sup>१</sup> नित्यं<sup>२</sup> स्वप्रकाशं"),
+    ("पदम्^१२।", "पदम्<sup>१२</sup>।"),          # multi-digit, punctuation after
+    ("x^2 and a^b", "x^2 and a^b"),                 # ASCII digits / letters untouched
+    (r"literal \^१ here", "literal ^१ here"),        # escaped
+    ("^१ at start", "<sup>१</sup> at start"),
+    ("a^१\n```\nb^१\n```\nc^१", "a<sup>१</sup>\n```\nb^१\n```\nc<sup>१</sup>"),  # fenced code untouched
+])
+def test_superscript_shorthand(src, expected):
+    assert expand_superscript_shorthand(src) == expected
+
+
+def test_on_page_markdown_applies_shorthand():
+    assert on_page_markdown("सुखं^१", page=None, config=None, files=None) == "सुखं<sup>१</sup>"

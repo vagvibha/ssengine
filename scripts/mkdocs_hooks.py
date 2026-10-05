@@ -27,7 +27,9 @@ Referencing a local Python file this way — rather than a plain
 arbitrary project-local file. MkDocs' `hooks:` mechanism exists
 specifically for this — it imports a local file relative to mkdocs.yml
 and calls its on_*() event functions, so a local file (no packaging, no
-install step) can still reach into the build config."""
+install step) can still reach into the build config.
+
+Also: footnote-marker shorthand (see on_page_markdown)."""
 
 import re
 import unicodedata
@@ -59,3 +61,31 @@ def on_config(config, **kwargs):
     untouched."""
     config["mdx_configs"].setdefault("toc", {})["slugify"] = devanagari_safe_slugify
     return config
+
+
+# Footnote-marker shorthand: `सुखं^१` -> `सुखं<sup>१</sup>`. Only a caret
+# followed by Devanagari digits (०-९) is touched, so no other use of `^`
+# can be caught. `\^१` gives a literal `^१`. Fenced code blocks are left
+# alone. Website only: the dictionary build (generate_dict.py) never goes
+# through MkDocs, so a marker stays as plain `^१` text there.
+_RE_FENCE = re.compile(r"^(```|~~~).*?^\1[^\n]*$", re.MULTILINE | re.DOTALL)
+_RE_SUP = re.compile(r"(\\?)\^([०-९]+)")
+
+
+def _sup(m: "re.Match") -> str:
+    return f"^{m.group(2)}" if m.group(1) else f"<sup>{m.group(2)}</sup>"
+
+
+def expand_superscript_shorthand(markdown: str) -> str:
+    out, pos = [], 0
+    for f in _RE_FENCE.finditer(markdown):
+        out.append(_RE_SUP.sub(_sup, markdown[pos:f.start()]))
+        out.append(f.group(0))
+        pos = f.end()
+    out.append(_RE_SUP.sub(_sup, markdown[pos:]))
+    return "".join(out)
+
+
+def on_page_markdown(markdown, **kwargs):
+    """MkDocs hook event — runs on every page's Markdown before rendering."""
+    return expand_superscript_shorthand(markdown)
