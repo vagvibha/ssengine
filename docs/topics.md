@@ -221,6 +221,7 @@ gloss. It isn't processed inside topic pages themselves.
 | `define` | optional | optional | Adds a परिभाषाः row for this term. |
 | `entry` | not allowed | with `define` | The definition text (the body is the definition in the paired form). |
 | `context` | optional | optional | Adds a सन्दर्भाः line with this text as the link. |
+| `heading` | optional | optional | Lists the citation under one heading of the topic page instead (below). |
 
 ### What goes on the topic page
 
@@ -275,6 +276,58 @@ Both forms accept it. The tag then counts for each topic exactly as if
 it had been tagged for that topic alone. On the text page a paired tag
 gets one ↗ per topic, each showing its topic's name on hover.
 
+### Citing one heading: `heading=`
+
+For a much-cited passage, give the topic page one heading per passage,
+with the passage's exact text as the heading, and write whatever you
+like under it. A tag with `heading=` then lists its citation at the end
+of that heading's section instead of in the main सन्दर्भाः list:
+
+```markdown
+---
+title: प्रमाणवाक्यानि
+---
+## यन्मनसा न मनुते
+
+…notes on this vakya…
+```
+
+```html
+<topic name="प्रमाणवाक्यानि" heading="यन्मनसा न मनुते" context="के. १.५">यन्मनसा न मनुते</topic>
+<topic name="प्रमाणवाक्यानि" heading="यन्मनसा न मनुते"/>
+```
+
+- **On the text page:** the ↗ links straight to the heading, not the top
+  of the topic page. A paired tag keeps its body, as usual. The
+  self-closing form is *not* removed entirely here: it leaves an empty
+  anchor and the ↗ at that spot, so the back-link lands there.
+- **On the topic page:** the heading gets an explicit anchor (its own
+  `{#id}` if you wrote one, otherwise a generated one), and at the end of
+  its section, just before the next heading of the same or a higher
+  level, or at the end of the page, a list:
+
+  ```
+  - के. १.५ — [उपनिषद्भाष्यम् — खण्डः 1](…)
+  - [उपनिषद्भाष्यम् — खण्डः 2](…)
+  ```
+
+  `context` is optional and comes first; the link is always the place
+  (`<text> — <chapter>[ — <section>]`). A paired body is never used as
+  the label, so it can be any length.
+- **Duplicates:** identical lines are listed once (the first one's link
+  wins). For the same place, lines without a `context` are dropped when
+  one with a `context` exists; different `context`s are all kept.
+- **Main list:** these citations never appear in the topic's main
+  सन्दर्भाः list (or its separate page in sections mode).
+- **Matching:** `heading=` must equal the text of exactly one `#`…`######`
+  heading on that topic's page — in a multi-file topic, in any of its
+  files. The text is compared as written in Markdown (so `**…**` must be
+  repeated), ignoring the `#`s, a closing `##` and a trailing `{#id}`/
+  `{.class}`. Headings in fenced code and underlined (`===`) headings
+  don't count.
+- **Sections-mode topics:** the list goes on the part page that holds the
+  heading, and the ↗ links to that part page.
+
 ### Errors
 
 Anything the engine can't use as written stops the build, with the file
@@ -291,25 +344,15 @@ and the tag in the message:
   definition or the label;
 - a body label over 70 characters;
 - a `<topic>` opened inside another, a `</topic>` with no opening tag,
-  or a `<topic>` never closed.
+  or a `<topic>` never closed;
+- with `heading`: no heading with that text on the topic page, or more
+  than one; `heading` together with `define` (or `entry`); several topics
+  in `name`; an empty `heading`.
 
 ### Sections mode
 
 In a `sections`-mode chapter, each back-link points to the section's
 own page, and its label includes the section's `title`.
-
-### Warnings
-
-The build still succeeds; the tag just does less.
-
-| Problem | Result |
-|---|---|
-| `name` doesn't match any topic's `title` | Passage shown, no ↗ link, nothing added. |
-| No `name` | Tag removed, passage shown, nothing added. |
-| Neither `context` nor `define` | Anchor and ↗ link only. |
-| `define` with an empty passage | No row added. |
-| Self-closing tag missing `define` or `entry` | Nothing added. |
-| `<topic>` never closed, or `</topic>` with no opening tag | Left as literal text. |
 
 ## Chandas and alankara glossaries
 

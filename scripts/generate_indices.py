@@ -1335,6 +1335,7 @@ class RefPage:
         self.references: list["Reference"] = []  # filled in during the scan
         self.category: "TopicCategory | None" = None  # filled in by main(), after discover_topic_categories
         self.parts: list[TopicPart] = parts or []  # multi-file topics only, in order
+        self._heading_index: "dict[str, list[HeadingTarget]] | None" = None
 
     @property
     def sort_key(self):
@@ -1370,6 +1371,66 @@ class RefPage:
     @property
     def out_file(self) -> Path:
         return DOCS / self.rel_out_file
+
+    def rendered_bodies(self) -> list[tuple[str, str]]:
+        """(output page, body as rendered there) for every page that
+        carries this topic's authored text: the one topic page, or in
+        sections mode one per part. The bodies are stripped exactly as
+        render_ref_page/render_ref_page_sections strip them, so heading
+        line numbers line up with what gets written."""
+        if self.display_style == "sections":
+            return [(self.part_rel_out_file(p), p.body.strip()) for p in self.parts]
+        return [(self.rel_out_file, self.body.strip())]
+
+    @property
+    def heading_index(self) -> "dict[str, list[HeadingTarget]]":
+        """Every ATX heading on this topic's page(s), keyed by its text
+        (see heading_text_and_id), for `<topic heading="...">`. Built on
+        first use. Anchors are numbered across the whole topic, so they
+        stay unique in sections mode too."""
+        if self._heading_index is None:
+            index: dict[str, list[HeadingTarget]] = {}
+            k = 0
+            for rel_file, body in self.rendered_bodies():
+                for lineno, level, line in atx_heading_levels(body):
+                    text, own_id = heading_text_and_id(line)
+                    k += 1
+                    index.setdefault(text, []).append(
+                        HeadingTarget(rel_file, lineno - 1, level, text, own_id or f"tph{k}", own_id is not None))
+            self._heading_index = index
+        return self._heading_index
+
+    def find_heading(self, text: str, where: str) -> "HeadingTarget":
+        """The one heading on this topic whose text is exactly `text`;
+        TopicTagError if there's none or more than one."""
+        found = self.heading_index.get(text, [])
+        if not found:
+            raise TopicTagError(
+                f"{where}: topic '{self.title}' ({self.path}) has no heading with the text '{text}' — "
+                f"heading= must match a '#'..'######' heading's text exactly")
+        if len(found) > 1:
+            raise TopicTagError(
+                f"{where}: topic '{self.title}' ({self.path}) has {len(found)} headings with the text "
+                f"'{text}' — heading= must match exactly one")
+        return found[0]
+
+
+class HeadingTarget:
+    """One heading on a topic page that `<topic heading="...">` tags can
+    point at. `line_idx` is its 0-based line in the rendered body of
+    `rel_file` (see RefPage.rendered_bodies). `anchor` is the author's own
+    `{#id}` when the heading has one (`own_id`), else a generated `tphN`
+    that render time appends to the heading. `refs` collects the
+    citations, rendered as a list at the end of the heading's section."""
+
+    def __init__(self, rel_file: str, line_idx: int, level: int, text: str, anchor: str, own_id: bool):
+        self.rel_file = rel_file
+        self.line_idx = line_idx
+        self.level = level
+        self.text = text
+        self.anchor = anchor
+        self.own_id = own_id
+        self.refs: list[Reference] = []
 
 
 class Reference:
@@ -1673,10 +1734,6 @@ def build_glossary_page(kind: str, path: Path, rel_dir: str) -> tuple[dict[str, 
     return entries, rendered, fm
 
 
-    parts.append("")
-    return "\n".join(parts)
-
-
 # ---------------------------------------------------------------------------
 # <topic name="..." define="term" context="...">...</topic> — replaces
 # BOTH sahitya mechanisms at once:
@@ -1748,8 +1805,8 @@ TOPIC_JUMP_MARK = "↗"
 TOPIC_NAME_SEP = ","
 
 # Attributes each <topic> form accepts — anything else stops the build.
-TOPIC_ATTRS_PAIRED = ("name", "define", "context")
-TOPIC_ATTRS_SELF_CLOSING = ("name", "define", "entry", "context")
+TOPIC_ATTRS_PAIRED = ("name", "define", "context", "heading")
+TOPIC_ATTRS_SELF_CLOSING = ("name", "define", "entry", "context", "heading")
 
 # A paired <topic> with neither define= nor context= uses its body as the
 # सन्दर्भाः label; a link label should be a short pointer, not a passage.
@@ -1868,16 +1925,28 @@ def process_topic_tags(
         TOPIC_LABEL_MAX characters, since it's a link label.
       - define= + context= adds both.
 
+    HEADING-SCOPED — `heading="<text>"` (either form) points the
+    citation at one heading on the topic page instead: the reference is
+    listed at the end of that heading's section (see
+    inject_heading_references), never in the main सन्दर्भाः list, and the
+    ↗ links straight to that heading. context= is optional and becomes
+    the entry's lead text; a paired body is never used as a label. The
+    self-closing form isn't stripped entirely here: it leaves an empty
+    `<span id="tpN"></span>` plus ↗ so the back-link lands on that spot.
+    heading= must match exactly one heading of a single named topic, and
+    can't be combined with define=.
+
     `name=` may list several topics, comma-separated (`name="X, Y"`): the
     tag then counts for each of them exactly as if tagged for that one
     alone. Every listed name must be a known topic.
 
     Anything else is a TopicTagError and stops the build: unknown
-    attribute (paired: name/define/context; self-closing: also entry),
+    attribute (paired: name/define/context/heading; self-closing: also entry),
     missing or unknown name, empty define=/context=/entry=/body where one
     is needed, entry= without define= or vice versa, a self-closing tag
     with neither a definition nor context=, an over-long body label, a
-    <topic> opened inside another, a stray </topic>, or an unclosed one.
+    <topic> opened inside another, a stray </topic>, or an unclosed one,
+    and the heading= errors above.
 
     Both forms are found via a token-based scan (TOPIC_OPEN_RE/
     TOPIC_CLOSE_RE, paired up procedurally) rather than one DOTALL regex
@@ -1917,10 +1986,11 @@ def process_topic_tags(
     def definition_html(text: str) -> str:
         return render_definition_markdown(text)
 
-    def resolve(attrs_str: str, body_text: str | None) -> tuple[list[str], str, str, str]:
+    def resolve(attrs_str: str, body_text: str | None) -> tuple[list[str], str, str, str, "HeadingTarget | None"]:
         """Checks one tag and returns (names, raw name=, definition html
-        or "", reference label html or ""). `body_text` is None for the
-        self-closing form. See the docstring above for the rules."""
+        or "", reference label html or "", heading target or None).
+        `body_text` is None for the self-closing form. See the docstring
+        above for the rules."""
         attrs = parse_attrs(attrs_str)
         tag = f"<topic {attrs_str.strip()}{'/' if body_text is None else ''}>"
         allowed = TOPIC_ATTRS_SELF_CLOSING if body_text is None else TOPIC_ATTRS_PAIRED
@@ -1939,6 +2009,20 @@ def process_topic_tags(
             fail(f"{tag}: define= is empty")
         if "context" in attrs and not context:
             fail(f"{tag}: context= is empty")
+        heading = (attrs.get("heading") or "").strip()
+        target = None
+        if "heading" in attrs:
+            if not heading:
+                fail(f"{tag}: heading= is empty")
+            if "define" in attrs:
+                fail(f"{tag}: heading= can't be combined with define= — a heading-scoped citation is a "
+                     f"reference, not a definition")
+            if "entry" in attrs:
+                fail(f"{tag}: entry= needs define= (the term it defines), and define= can't be used with heading=")
+            if len(names) > 1:
+                fail(f"{tag}: heading= needs a single topic in name= (the heading is on one topic's page)")
+            target = topics[names[0]].find_heading(heading, f"{source_for_warning}: {tag}")
+            return names, raw_name, "", html.escape(context) if context else "", target
 
         def_html = ""
         if body_text is None:
@@ -1964,7 +2048,23 @@ def process_topic_tags(
                 fail(f"{tag}: the body becomes this reference's label, but it's {len(plain)} characters "
                      f"(max {TOPIC_LABEL_MAX}) — add a short context=\"...\" for the label instead")
             label = html.escape(plain)
-        return names, raw_name, def_html, label
+        return names, raw_name, def_html, label, None
+
+    def jump_links(names: list[str], target: "HeadingTarget | None") -> str:
+        """One ↗ per topic, each titled with its topic's name; to the
+        heading when the tag is heading-scoped."""
+        if target is not None:
+            href = raw_html_href(page_rel_out_file, target.rel_file) + f"#{target.anchor}"
+            return (f' <a class="sv-topic-jump" href="{href}" '
+                    f'title="{html.escape(names[0])}">{TOPIC_JUMP_MARK}</a>')
+        return "".join(
+            f' <a class="sv-topic-jump" href="{raw_html_href(page_rel_out_file, topics[n].rel_out_file)}" '
+            f'title="{html.escape(n)}">{TOPIC_JUMP_MARK}</a>'
+            for n in names
+        )
+
+    def add_heading_reference(names: list[str], label: str, anchor: str, target: "HeadingTarget") -> None:
+        target.refs.append(Reference(names[0], chapter, anchor, label, page_rel_out_file, section_title))
 
     def add_reference(names: list[str], label: str, anchor: str | None) -> None:
         for n in names:
@@ -1975,8 +2075,15 @@ def process_topic_tags(
 
     for start, end, kind, attrs_str, self_closing in tokens:
         if kind == "open" and self_closing:
+            names, _, def_html, label, target = resolve(attrs_str, None)
+            if target is not None:
+                # heading-scoped: an empty anchor + ↗ stays, so the back-link lands here
+                counter += 1
+                anchor = f"tp{counter}"
+                splices.append((start, end, f'<span id="{anchor}"></span>{jump_links(names, target)}'))
+                add_heading_reference(names, label, anchor, target)
+                continue
             splices.append((start, end, ""))  # never shows anything on the page
-            names, _, def_html, label = resolve(attrs_str, None)
             term = (parse_attrs(attrs_str).get("define") or "").strip()
             if def_html:
                 for n in names:
@@ -1998,18 +2105,14 @@ def process_topic_tags(
         if not stack:
             fail(f"</topic> at offset {start} with no matching open <topic>")
         o_start, o_end, o_attrs_str = stack.pop()
-        names, _, def_html, label = resolve(o_attrs_str, body[o_end:start])
+        names, _, def_html, label, target = resolve(o_attrs_str, body[o_end:start])
         counter += 1
         anchor = f"tp{counter}"
-        # one jump mark per topic, each titled with its topic's name
-        jump_link = "".join(
-            f' <a class="sv-topic-jump" href="{raw_html_href(page_rel_out_file, topics[n].rel_out_file)}" '
-            f'title="{html.escape(n)}">{TOPIC_JUMP_MARK}</a>'
-            for n in names
-        )
         splices.append((o_start, o_end, f'<span id="{anchor}">'))
-        splices.append((start, end, f'</span>{jump_link}'))
-        if label:
+        splices.append((start, end, f'</span>{jump_links(names, target)}'))
+        if target is not None:
+            add_heading_reference(names, label, anchor, target)
+        elif label:
             add_reference(names, label, anchor)
         if def_html:
             term = (parse_attrs(o_attrs_str).get("define") or "").strip()
@@ -3219,6 +3322,88 @@ def atx_heading_levels(body: str) -> list[tuple[int, int, str]]:
     return found
 
 
+# A trailing attr_list block on a heading (`## Text {#id .cls}`, also
+# `{: #id}`) — only when it looks like attributes, so a heading that
+# merely ends in a Jinja `{{ x }}` or a literal `{…}` isn't cut.
+HEADING_ATTR_LIST_RE = re.compile(r"[ \t]*(?<!\{)\{:?[ \t]*((?:[#.]|[\w-]+=)[^{}]*)\}[ \t]*$")
+HEADING_OWN_ID_RE = re.compile(r"(?:^|[ \t])#([^\s{}]+)")
+
+
+def heading_text_and_id(line: str) -> tuple[str, str | None]:
+    """(text, author's own id or None) for an ATX heading line, as
+    `<topic heading="...">` matches it: the raw Markdown text with the
+    leading `#`s, a trailing attr_list block and a closing `#` sequence
+    removed, then stripped. Anything else (markup like `**…**`) is kept,
+    so heading= must repeat it exactly."""
+    s = re.sub(r"^\s*#{1,6}", "", line).strip()
+    own_id = None
+    m = HEADING_ATTR_LIST_RE.search(s)
+    if m:
+        idm = HEADING_OWN_ID_RE.search(m.group(1))
+        own_id = idm.group(1) if idm else None
+        s = s[:m.start()]
+    s = re.sub(r"(?:^|[ \t]+)#+[ \t]*$", "", s)  # closing sequence, e.g. "## A ##"
+    return s.strip(), own_id
+
+
+def heading_reference_lines(target: "HeadingTarget", current_rel_file: str) -> list[str]:
+    """The list under one heading-scoped heading: `- <context> — [<label>](link)`,
+    or `- [<label>](link)` without a context. An exact duplicate
+    (same context and label) keeps its first occurrence; and for one
+    label, entries without a context are dropped when any has one."""
+    entries: list[tuple[str, str, str]] = []  # (context html, label, link)
+    seen: set[tuple[str, str]] = set()
+    for ref in target.refs:
+        key = (ref.preview, ref.label)
+        if key in seen:
+            continue
+        seen.add(key)
+        entries.append((ref.preview, ref.label, rel_link(current_rel_file, ref.page_rel_out_file) + f"#{ref.anchor}"))
+    labels_with_context = {label for ctx, label, _ in entries if ctx}
+    lines = []
+    for ctx, label, link in entries:
+        if not ctx and label in labels_with_context:
+            continue
+        text = label.replace("[", "\\[").replace("]", "\\]")
+        lines.append(f"- {ctx} — [{text}]({link})" if ctx else f"- [{text}]({link})")
+    return lines
+
+
+def inject_heading_references(page: "RefPage", rel_file: str, body: str) -> str:
+    """`body` (as rendered at `rel_file`) with, for every heading there
+    that `<topic heading="...">` tags cite: an explicit `{#anchor}` on the
+    heading (unless it has its own id), and the list of citations at the
+    end of its section — just before the next heading of the same or a
+    higher level, else at the end of the body. Lists that land on the
+    same spot (a heading and the one it's nested in) go innermost first,
+    kept apart with `<!-- -->` so Markdown doesn't merge them."""
+    targets = [t for ts in page.heading_index.values() for t in ts if t.rel_file == rel_file and t.refs]
+    if not targets:
+        return body
+    lines = body.splitlines()
+    headings = [(lineno - 1, level) for lineno, level, _ in atx_heading_levels(body)]
+    inserts: dict[int, list[tuple[int, list[str]]]] = {}
+    for t in targets:
+        if not t.own_id:
+            lines[t.line_idx] = f"{'#' * t.level} {t.text} {{#{t.anchor}}}"
+        end = next((i for i, level in headings if i > t.line_idx and level <= t.level), len(lines))
+        while end > t.line_idx + 1 and not lines[end - 1].strip():
+            end -= 1  # right after the section's last text, not after its trailing blank lines
+        inserts.setdefault(end, []).append((t.line_idx, heading_reference_lines(t, rel_file)))
+    out: list[str] = []
+    for i in range(len(lines) + 1):
+        if i in inserts:
+            groups = [g for _, g in sorted(inserts[i], key=lambda x: -x[0])]
+            for j, group in enumerate(groups):
+                out += ["", "<!-- -->"] if j else []
+                out += [""] + group
+            if i < len(lines) and lines[i].strip():
+                out.append("")
+        if i < len(lines):
+            out.append(lines[i])
+    return "\n".join(out).rstrip("\n")
+
+
 def check_section_headings(body: str, skip_title: bool, source: object) -> None:
     """In sections mode the generated page owns the top of the heading
     tree: the browser title comes from frontmatter (no H1) and each
@@ -3407,7 +3592,7 @@ def render_ref_page(page: RefPage, definitions: list[TopicDefinition]) -> str:
         # samples, already include their own '# ...' heading).
         parts.append(f"# {page.title}")
         parts.append("")
-    parts.append(body)
+    parts.append(inject_heading_references(page, page.rel_out_file, body))
     table_html = build_topic_definitions_table(page.rel_out_file, definitions, page.frontmatter)
     if table_html:
         parts.append("")
@@ -3464,7 +3649,7 @@ def render_ref_page_sections(page: RefPage, definitions: list[TopicDefinition]) 
         body = part.body.strip()
         if not H1_RE.match(body):
             lines += [f"# {page.title} — {part.title}", ""]
-        lines += [body, ""]
+        lines += [inject_heading_references(page, rel_file, body), ""]
         write_md(DOCS / rel_file, "\n".join(lines))
 
     extras: list[tuple[str, str]] = []  # (label, rel_out_file) for the landing page
