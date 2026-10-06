@@ -55,7 +55,8 @@ def test_skip_text_index_with_sections_mode(tmp_path):
     assert "# तर्कसङ्ग्रहः\n" in landing
     assert "../../../index.md" in landing                  # Up -> section index (one level deeper)
     section_page = (docs / "01" / "01.md").read_text(encoding="utf-8")
-    assert "# तर्कसङ्ग्रहः — 01\n" in section_page          # section page: text — section
+    assert section_page.startswith("---\ntitle: तर्कसङ्ग्रहः — 01\n---\n")  # page title: text — section
+    assert "\n## 01\n" in section_page and "\n# " not in section_page
     assert "⬆ तर्कसङ्ग्रहः](index.md)" in section_page
     assert text_nav_entry(site) == f"{OUT}/01/index.md"
 

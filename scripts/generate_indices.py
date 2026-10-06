@@ -18,7 +18,7 @@ What it does, in order:
     `<dir>/<group>/<slug>/...` convention needs no code changes here.
 2.  Reads `meta.yaml`/`meta.yml` for every text under each configured
     section's text-group directories, and (optionally) for every
-    individual chapter directory (`chapter_name`).
+    individual chapter directory (`title`).
 3.  Reads every topic page under the (optional, at-most-one, repo-root)
     `topics/` folder — see site_config.yaml's `topics:` block. Every
     topic lives inside a category directory —
@@ -123,7 +123,7 @@ stays at the repo root:
                 meta.yaml        title, author, default_shloka_type, default_class, order,
                                  skip_text_index (1-chapter texts: no TOC page), ...
                 <chapter>/
-                    meta.yaml    (optional) chapter_name
+                    meta.yaml    (optional) title
                     *.md         section files, concatenated in numeric order
 
     <topics.dir>/               (optional, repo root — NOT inside any
@@ -282,7 +282,7 @@ BOOK_META_KEYS = {
 }
 BOOK_DICT_KEYS = {"folder": "str"}
 CHAPTER_META_KEYS = {
-    "chapter_name": "str", "chapter_display_style": "str", "toc": "maplist", "ignore": "bool",
+    "title": "str", "chapter_display_style": "str", "toc": "maplist", "ignore": "bool",
     "default_shloka_type": "str", "default_class": "str", "shloka_toc": "bool",
     "shloka_highlight": "bool", "dict": "map",
 }
@@ -414,6 +414,10 @@ def validate_chapter_toc(entries: list, where: str) -> None:
 
 
 def validate_chapter_meta(meta: dict, where: object) -> None:
+    # Renamed key: fail with a pointer to the new name rather than the
+    # generic "unknown key(s)" message.
+    if isinstance(meta, dict) and "chapter_name" in meta:
+        raise ConfigError(f"{where}: chapter_name was renamed to title — use 'title:' instead")
     check_keys(meta, CHAPTER_META_KEYS, where)
     check_keys(meta.get("dict"), CHAPTER_DICT_KEYS, f"{where}: dict")
     style = str(meta.get("chapter_display_style") or "").strip()
@@ -1105,8 +1109,9 @@ class Chapter:
 
     @property
     def display_title(self) -> str:
-        """"<text> — <chapter>", used for this chapter's H1 and for the
-        labels of references back to it — just "<text>" under
+        """"<text> — <chapter>", used for this chapter's H1 (and, with
+        " — <section>" added, a sections-mode section page's frontmatter
+        title) and for the labels of references back to it — just "<text>" under
         skip_text_index, where the text has only this one chapter."""
         if self.text.skip_text_index:
             return self.text.title
@@ -1122,8 +1127,8 @@ class Chapter:
 
     @property
     def nav_label(self) -> str:
-        if self.meta.get("chapter_name"):
-            return str(self.meta["chapter_name"]).strip()
+        if self.meta.get("title"):
+            return str(self.meta["title"]).strip()
 
         try:
             n = int(self.slug)
@@ -1243,7 +1248,7 @@ def discover_chapters(text: Text) -> list[Chapter]:
     dir_children = {d.name: d for d in text.dir.iterdir() if d.is_dir() and not d.name.startswith(".")}
 
     for name, d in dir_children.items():
-        chapter_meta = read_meta(d)  # optional meta.yaml/meta.yml inside the chapter dir (chapter_name, default_shloka_type, default_class, ...)
+        chapter_meta = read_meta(d)  # optional meta.yaml/meta.yml inside the chapter dir (title, default_shloka_type, default_class, ...)
         validate_chapter_meta(chapter_meta, find_meta_file(d) or d)
         if chapter_meta.get("ignore"):
             print(f"Skipping {d} (ignore: true in meta.yaml)")
@@ -3179,6 +3184,70 @@ def record_shloka_references(
                 )
 
 
+class SectionHeadingError(ValueError):
+    """A sections-mode section file uses a heading level reserved for the
+    generated page (see check_section_headings). Always fatal."""
+
+
+# An ATX heading line: up to 3 spaces of indent, then 1-6 '#', then a
+# space/tab or end of line (so "#hashtag" isn't one).
+ATX_HEADING_RE = re.compile(r"^ {0,3}(#{1,6})(?:[ \t]|$)")
+# Opening/closing line of a fenced code block: ``` or ~~~ (3 or more),
+# indented by up to 3 spaces.
+FENCE_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})")
+
+
+def atx_heading_levels(body: str) -> list[tuple[int, int, str]]:
+    """(line number, level, line) for every ATX heading in `body` that's
+    outside a fenced code block. A fence closes only on a run of the
+    same character at least as long as the one that opened it."""
+    found: list[tuple[int, int, str]] = []
+    fence: str | None = None
+    for lineno, line in enumerate(body.splitlines(), start=1):
+        m = FENCE_RE.match(line)
+        if fence is not None:
+            if m and m.group(1)[0] == fence[0] and len(m.group(1)) >= len(fence) \
+                    and not line.strip()[len(m.group(1)):].strip():
+                fence = None
+            continue
+        if m:
+            fence = m.group(1)
+            continue
+        h = ATX_HEADING_RE.match(line)
+        if h:
+            found.append((lineno, len(h.group(1)), line.strip()))
+    return found
+
+
+def check_section_headings(body: str, skip_title: bool, source: object) -> None:
+    """In sections mode the generated page owns the top of the heading
+    tree: the browser title comes from frontmatter (no H1) and each
+    section page gets an automatic `## <section title>`. So a `#` heading
+    in a section file is always an error, and a `##` heading is one too
+    unless the file sets `skip_title: true` (it writes its own `##`).
+    Authored headings therefore normally start at `###`. Line numbers
+    count from the line after the frontmatter."""
+    for lineno, level, line in atx_heading_levels(body):
+        if level == 1:
+            raise SectionHeadingError(
+                f"{source}: body line {lineno}: '{line}' — a '#' heading isn't allowed in a "
+                f"sections-mode section file; start authored headings at '###'"
+            )
+        if level == 2 and not skip_title:
+            raise SectionHeadingError(
+                f"{source}: body line {lineno}: '{line}' — a '##' heading isn't allowed here, because "
+                f"the page already gets '## <section title>'; use '###', or set 'skip_title: true' "
+                f"in this file's frontmatter to write your own '##'"
+            )
+
+
+def page_title_frontmatter(title: str) -> str:
+    """A YAML frontmatter block setting the generated page's `title:`
+    (browser tab and search results), for pages with no H1."""
+    dumped = yaml.safe_dump({"title": title}, allow_unicode=True, default_flow_style=False, width=10**6)
+    return f"---\n{dumped}---\n"
+
+
 def render_chapter_sections(
     chapter: Chapter, topics: dict[str, RefPage], chandas: dict[str, "TableEntry"], alankaras: dict[str, "TableEntry"],
     definitions: dict[str, list[TopicDefinition]],
@@ -3193,7 +3262,12 @@ def render_chapter_sections(
     render_chapter_full, this writes its own output files directly
     (there's no single "the" chapter page to hand back to the caller) and
     records shloka/topic references against each section's own page, not
-    the chapter's landing page — see Reference."""
+    the chapter's landing page — see Reference.
+
+    A section page has no H1: it gets a frontmatter `title:` ("<text> —
+    <chapter> — <section>") and an automatic `## <section title>`
+    (omitted with `skip_title: true`); see check_section_headings for the
+    heading levels a section file may use."""
     up_target, up_label = chapter.text.up_target
     siblings = chapter.text.chapters
     idx = siblings.index(chapter)
@@ -3213,6 +3287,10 @@ def render_chapter_sections(
         body = strip_excluded_glosses(body, chapter.text.effective_gloss_types)
         body, _dict_captures = dict_extract.extract_dict_and_ref_tags(body, source_for_warning=section)
         display_title = section_display_title(fm, section.stem)
+        skip_title = fm.get("skip_title", False)
+        if not isinstance(skip_title, bool):
+            raise ConfigError(f"{section}: skip_title should be true or false, got {skip_title!r}")
+        check_section_headings(body, skip_title, section)
         section_rel_file = chapter.section_rel_out_file(section)
         toc_entries.append((display_title, section_rel_file))
 
@@ -3249,10 +3327,16 @@ def render_chapter_sections(
             prev_target_rel_file=chapter.section_rel_out_file(prev_sec) if prev_sec else None,
             next_target_rel_file=chapter.section_rel_out_file(next_sec) if next_sec else None,
         )
-        title_line = f"# {chapter.display_title} — {display_title}"
+        # No H1 on a section page: the page title (browser tab, search
+        # results) comes from frontmatter instead, and the section gets an
+        # automatic `## <section title>` unless it writes its own
+        # (skip_title) — see check_section_headings.
+        head = [page_title_frontmatter(f"{chapter.display_title} — {display_title}") + topnav]
+        if not skip_title:
+            head += [f"## {display_title}", ""]
         table_lines = build_shloka_table(section_rel_file, shlokas, chandas, alankaras)
         content = "\n".join(
-            [topnav, title_line, ""] + [f'<div id="sec1"></div>\n\n{body.strip()}'] + [""] + table_lines
+            head + [f'<div id="sec1"></div>\n\n{body.strip()}'] + [""] + table_lines
         ) + "\n"
         write_md(DOCS / section_rel_file, content)
 

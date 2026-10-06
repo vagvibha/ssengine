@@ -190,7 +190,7 @@ dropping a container drops everything in it.
 
 | Key | Kind | Meaning |
 |---|---|---|
-| `chapter_name` | text | Nav label (else `chapter_type`/section word + number). |
+| `title` | text | Nav label (else `chapter_type`/section word + number). Formerly `chapter_name`, which is now a build error. |
 | `chapter_display_style` | text | `full_chapter` (default: one page) or `sections` (a landing page plus a page per `.md` file). |
 | `toc` | list | `sections` mode only: group the landing page's list under headings. See below. |
 | `ignore` | bool | Skip this chapter entirely (site and dictionary). |
@@ -276,15 +276,41 @@ a typo here is silently ignored.
 
 | Key | Kind | Meaning |
 |---|---|---|
-| `title` | text | `sections` mode only: the section's name on the chapter's landing page and in back-links from topic pages. Default: the filename. |
+| `title` | text | `sections` mode only: the section's name on the chapter's landing page, in its page's `## ` heading and browser title, and in back-links from topic pages. Default: the filename. |
+| `skip_title` | bool | `sections` mode only: leave out the automatic `## <title>` heading, because the file writes its own `##`. The landing page, back-links and browser title still use `title`. |
 | `ignore` | bool | Skip this section file entirely. In a single-file `<chapter>.md`, skips the whole chapter. |
 | `chandas` | text | Default meter for every shloka in the file (a shloka's own `data-chandas=` wins). |
 | `alankara` | list | Default figure(s) for every shloka in the file (a shloka's own `data-alankara=` wins). |
 | `dict` | mapping | `syns`, `skip`: shloka-format dictionary defaults. See [dict.md](dict.md#shloka-format). |
 
-Any other key is ignored by the engine. Generated pages carry no
-frontmatter, so `{{ page.meta.… }}` can't read these either — use
-`{% set name = "…" %}` in the body instead.
+Any other key is ignored by the engine. These keys are not copied into
+the generated pages, so `{{ page.meta.… }}` can't read them either — use
+`{% set name = "…" %}` in the body instead. (A `sections`-mode section
+page carries only a generated `title:`; see below.)
+
+**Headings in `sections` mode.** Each section page is generated as:
+
+```
+---
+title: <book> — <chapter> — <section title>
+---
+<top nav>
+## <section title>          (left out with skip_title: true)
+<the file's body>
+```
+
+There's no `#` heading: the frontmatter `title:` gives the browser tab
+and search results their title. So in a `sections`-mode section file:
+
+- a `#` heading is always a build error;
+- a `##` heading is a build error unless the file sets
+  `skip_title: true`.
+
+Authored headings therefore normally start at `###`. Headings inside
+fenced code blocks don't count. `full_chapter` mode, the chapter's
+landing page (which keeps its `# <book> — <chapter>`) and topic pages
+are unaffected. Under `skip_text_index` the title is
+`<book> — <section title>`.
 
 **Files inside a multi-file topic directory** (`topics/<category>/<topic>/*.md`):
 `order` (the order they're joined in, or listed in `sections` mode;
@@ -310,7 +336,7 @@ at that level.
 | Keep shloka line breaks | `maintain_shloka_linebreak` | `maintain_shloka_linebreak` | — | — | — |
 | Skip the book index page | `skip_text_index` | `skip_text_index` | — | — | — |
 | Meter / figure | — | — | — | `chandas` / `alankara` | `data-chandas=` / `data-alankara=` |
-| Chapter nav label | `default_chapter_word` → section's `default_chapter_word` | `chapter_type` (+ number) | `chapter_name` | — | — |
+| Chapter nav label | `default_chapter_word` → section's `default_chapter_word` | `chapter_type` (+ number) | `title` | — | — |
 | Gloss type config | `gloss_types.yaml` | `gloss_types` (replaces the whole entry), `gloss_labels` (label only) | — | — | `toggle-hide="true"` / `"false"` |
 | Topic-page headings (definitions table, सन्दर्भाः) | `labels:` | — | — | — | topic frontmatter / `meta.yaml` |
 | Gloss type left out of the site | `gloss_types.yaml` `exclude_site` | `gloss_types` (whole entry) | — | — | — |
