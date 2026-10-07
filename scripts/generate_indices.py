@@ -245,6 +245,7 @@ SITE_CONFIG_KEYS = {
     "theme": "map", "labels": "map",
     "topics": "map", "default_chapter_word": "str", "maintain_shloka_linebreak": "bool",
     "dictionaries": "maplist", "content_sections": "maplist", "skip_text_index": "bool",
+    "display_source": "bool",
 }
 THEME_KEYS = {"primary": "str", "accent": "str", "language": "str"}
 LABEL_KEYS = {k: "str" for k in (
@@ -252,6 +253,7 @@ LABEL_KEYS = {k: "str" for k in (
     "about_nav_label",
     "shloka_list_heading", "references_heading", "definitions_heading",
     "term_column_heading", "definition_column_heading", "source_column_heading",
+    "source_label",
 )}
 TOPICS_CONFIG_KEYS = {"dir": "str", "h1_label": "str", "chandas_alankara": "bool"}
 CONTENT_SECTION_KEYS = {
@@ -270,15 +272,16 @@ GLOSS_TYPE_ENTRY_KEYS = {
 # `boxed:` values — see expand_gloss_shorthand.
 BOXED_VALUES = ("open", "closed")
 
-# `source:` is informational only (where the text came from) — never
-# read by the engine, but allowed so it doesn't have to live in a comment.
+# `source:` is where the text came from: a string or a list of strings.
+# Shown in small print under the text's TOC page only when
+# `display_source: true` (see Text.display_source / render_text_source).
 BOOK_META_KEYS = {
     "title": "str", "author": "str", "source": "any", "order": "str", "ignore": "bool",
     "header": "str", "chapters": "str", "chapter_type": "str",
     "default_shloka_type": "str", "default_class": "str",
     "gloss_types": "maplist", "gloss_labels": "map",
     "maintain_shloka_linebreak": "bool", "shloka_toc": "bool", "shloka_highlight": "bool", "dict": "map",
-    "skip_text_index": "bool",
+    "skip_text_index": "bool", "display_source": "bool",
 }
 BOOK_DICT_KEYS = {"folder": "str"}
 CHAPTER_META_KEYS = {
@@ -990,6 +993,15 @@ class Text:
         if "skip_text_index" in self.meta:
             return bool(self.meta["skip_text_index"])
         return bool(SITE_CONFIG.get("skip_text_index", False))
+
+    @property
+    def display_source(self) -> bool:
+        """`display_source: true` shows the text's `source:` under its TOC
+        page. Same precedence as skip_text_index: the text's own meta.yaml
+        wins if it sets the key at all, else the site default (false)."""
+        if "display_source" in self.meta:
+            return bool(self.meta["display_source"])
+        return bool(SITE_CONFIG.get("display_source", False))
 
     @property
     def landing_rel_file(self) -> str:
@@ -3117,7 +3129,37 @@ def build_text_index_page(text: Text) -> str:
     for ch in text.chapters:
         lines.append(f"- [{ch.nav_label}]({rel_link(rel_file, ch.rel_out_file)})")
     lines.append("")
+    lines.extend(render_text_source(text))
     return "\n".join(lines)
+
+
+def render_text_source(text: Text) -> list[str]:
+    """`मूलम् – A, B, C` in small print at the bottom of the text's TOC
+    page, when display_source is on and `source:` is non-empty. `source:`
+    is a string or a list of strings (joined with ", "). Written as a raw
+    HTML block, so Markdown is NOT applied: the values show as plain text
+    (a `[x](url)` stays literally as typed, not a link). Styling is the
+    site's: `.sv-text-source` in its own custom.css. Under skip_text_index
+    there is no TOC page, so nothing is shown."""
+    if not text.display_source:
+        return []
+    raw = text.meta.get("source")
+    where = f"{text.dir}/meta.yaml: source"
+    if raw is None:
+        return []
+    items = raw if isinstance(raw, list) else [raw]
+    parts = []
+    for item in items:
+        if isinstance(item, (dict, list)):
+            raise ConfigError(f"{where}: should be a string or a list of strings, got {raw!r}")
+        item = str(item).strip()
+        if item:
+            parts.append(item)
+    if not parts:
+        return []
+    label = site_label("source_label", "मूलम्")
+    body = html.escape(f"{label} – {', '.join(parts)}", quote=False)
+    return [f'<p class="sv-text-source">{body}</p>', ""]
 
 
 def section_display_title(fm: dict, stem: str) -> str:

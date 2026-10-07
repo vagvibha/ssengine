@@ -76,6 +76,7 @@ one-item list), **mapping**.
 | `default_chapter_word` | text | Last-resort chapter nav word (default `अध्यायः`). |
 | `maintain_shloka_linebreak` | bool | Site default: keep each pada of a shloka on its own line (`<br />`). Default false. A book can override it. |
 | `skip_text_index` | bool | Site default for the book key of the same name (single-chapter books go straight to their chapter page). Default false. A book can override it. |
+| `display_source` | bool | Site default for the book key of the same name (show the book's `source:` on its index page). Default false. A book can override it. |
 | `dictionaries` | list of mappings | `{name, folder}` per dictionary. See [dict.md](dict.md#site-registry). |
 | `content_sections` | list of mappings | The top-level content areas (see below). |
 
@@ -83,7 +84,8 @@ one-item list), **mapping**.
 `intro_nav_label`, `author_label`, `shloka_list_heading`,
 `references_heading`, `definitions_heading`, `term_column_heading`,
 `definition_column_heading`, `source_column_heading`, `about_nav_label`
-(link text for the About page, default `विषये`).
+(link text for the About page, default `विषये`), `source_label` (label
+before a book's sources on its index page, default `मूलम्`).
 
 **About page** — optional. Put an `about.md` at the content root (next to
 `assets/`). It is copied to `docs/about.md` with the usual Home pill (any
@@ -171,7 +173,7 @@ dropping a container drops everything in it.
 |---|---|---|
 | `title` | text | **Required** (a book without it is skipped with a warning). |
 | `author` | text | Shown on the book's index page. |
-| `source` | any | Informational only (where the text came from). Never read. |
+| `source` | text or list | Where the text came from. Shown only when `display_source` is on (see below). |
 | `order` | number | Position among texts in its group (then by title). |
 | `ignore` | bool | Skip this book entirely. |
 | `header` | text | Markdown shown at the top of the book's index page. |
@@ -184,7 +186,8 @@ dropping a container drops everything in it.
 | `maintain_shloka_linebreak` | bool | Overrides the site default. |
 | `shloka_toc` | bool | Default for whether shlokas are listed in a chapter's श्लोकसूची (default true). |
 | `dict` | mapping | Only `folder`. See [dict.md](dict.md#book-metayaml). |
-| `skip_text_index` | bool | Overrides the site default. Single-chapter books only (else a build error): no book index page. Links to the book go straight to its chapter page, whose H1 is just the book title and whose ⬆ goes to the section page. `author`/`header`/`chapters` are then unused. |
+| `skip_text_index` | bool | Overrides the site default. Single-chapter books only (else a build error): no book index page. Links to the book go straight to its chapter page, whose H1 is just the book title and whose ⬆ goes to the section page. `author`/`header`/`chapters`/`source` are then unused. |
+| `display_source` | bool | Overrides the site default. When on and `source:` is non-empty, the book's index page ends with one small line, `मूलम् – A, B, C` (label from `labels: source_label`; a list is joined with `, `). It is plain text: Markdown and links aren't rendered, HTML is escaped. A mapping is a build error. It's a `<p class="sv-text-source">`; style it in the site's own `custom.css`, e.g. `.md-typeset .sv-text-source { font-size: 0.8em; opacity: 0.75; }`. |
 
 ## Chapter `meta.yaml` (`<book>/<chapter>/meta.yaml`, optional)
 
@@ -335,6 +338,7 @@ at that level.
 | Shloka listed in श्लोकसूची | (true) | `shloka_toc` | `shloka_toc` | — | `toc="true"` / `toc="false"` |
 | Keep shloka line breaks | `maintain_shloka_linebreak` | `maintain_shloka_linebreak` | — | — | — |
 | Skip the book index page | `skip_text_index` | `skip_text_index` | — | — | — |
+| Show the book's `source:` | `display_source` | `display_source` | — | — | — |
 | Meter / figure | — | — | — | `chandas` / `alankara` | `data-chandas=` / `data-alankara=` |
 | Chapter nav label | `default_chapter_word` → section's `default_chapter_word` | `chapter_type` (+ number) | `title` | — | — |
 | Gloss type config | `gloss_types.yaml` | `gloss_types` (replaces the whole entry), `gloss_labels` (label only) | — | — | `toggle-hide="true"` / `"false"` |
@@ -345,6 +349,6 @@ Two details:
 - A book's `gloss_types:` entry replaces the site's entry for that type
   entirely — any key it leaves out (`boxed`, `hideable`, …) is unset, not
   inherited.
-- `shloka_toc`, `maintain_shloka_linebreak` and `skip_text_index` count as set whenever the
+- `shloka_toc`, `maintain_shloka_linebreak`, `skip_text_index` and `display_source` count as set whenever the
   key is present, so `false` at the book level overrides a site-level
   `true`.
