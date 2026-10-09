@@ -2494,14 +2494,41 @@ BOXED_MARKER_ATTR = "data-sv-boxed"
 BOXED_MARKER_RE = re.compile(rf'\s{BOXED_MARKER_ATTR}="true"')
 
 
+SKIP_LABEL_RE = re.compile(r'\bskip-label\s*=\s*"([^"]*)"', re.IGNORECASE)
+
+
+def commentary_skip_label(type_key: str, attrs: str, gloss_types: dict[str, dict]) -> bool:
+    """`skip-label="true"` on one instance: print no label for it (e.g. a
+    gloss resuming after a short interruption, where repeating the label
+    adds nothing). Only the label goes — style and Show/Hide are
+    unchanged. Ignored on a boxed type, whose label is the box's
+    <summary>. Any value other than "true"/"false" is an error."""
+    m = SKIP_LABEL_RE.search(attrs)
+    if not m:
+        return False
+    value = m.group(1).strip().lower()
+    if value not in ("true", "false"):
+        raise ConfigError(
+            f'<{type_key}>: skip-label="{m.group(1)}" — expected "true" or "false"')
+    cfg = gloss_types.get(type_key) or {}
+    if str(cfg.get("boxed") or "").strip().lower() in BOXED_VALUES:
+        return False
+    return value == "true"
+
+
 def commentary_label(type_key: str, attrs: str, gloss_types: dict[str, dict]) -> str:
     """The label shown before a commentary div's content. `label_from_attr`
     (a per-instance attribute, e.g. tika's data-name) wins when that
     instance sets it; otherwise the type's fixed `label` (if any) is the
     fallback — so a type can have both, e.g. `<objection>` shows the
-    configured "पूर्वपक्षः" while `<objection label="...">` shows its own."""
+    configured "पूर्वपक्षः" while `<objection label="...">` shows its own.
+    `skip-label="true"` (see commentary_skip_label) suppresses either.
+    Every caller — website div, dictionary notes/shloka/nested glosses —
+    goes through here, so they all honour it."""
     cfg = gloss_types.get(type_key)
     if not cfg:
+        return ""
+    if commentary_skip_label(type_key, attrs, gloss_types):
         return ""
     if cfg.get("label_from_attr"):
         own = parse_attrs(attrs).get(cfg["label_from_attr"], "").strip()

@@ -165,6 +165,22 @@ rendered inside its container's `<i>…</i>`; in a full-chapter entry
 each nested type is kept or dropped by `tags_keep` on its own, and
 dropping a container drops everything in it.
 
+**`skip-label="true"`** on one gloss/vada instance (shorthand or
+hand-written `<div>`) prints no label for it, e.g. when a gloss resumes
+after a short interruption:
+
+```html
+<tika data-name="लोचनम्">…</tika>
+<notes>…</notes>
+<tika data-name="लोचनम्" skip-label="true">…</tika>
+```
+
+Only the label goes: the type, style and Show/Hide membership are
+unchanged. It applies on the website and in the dictionary alike, and
+is ignored on a `boxed` type (its label is the box's `<summary>`).
+`"false"` is the same as leaving it out; any other value is a build
+error.
+
 ---
 
 ## Book `meta.yaml` (`<section>/<group>/<book>/meta.yaml`)
@@ -341,7 +357,7 @@ at that level.
 | Show the book's `source:` | `display_source` | `display_source` | — | — | — |
 | Meter / figure | — | — | — | `chandas` / `alankara` | `data-chandas=` / `data-alankara=` |
 | Chapter nav label | `default_chapter_word` → section's `default_chapter_word` | `chapter_type` (+ number) | `title` | — | — |
-| Gloss type config | `gloss_types.yaml` | `gloss_types` (replaces the whole entry), `gloss_labels` (label only) | — | — | `toggle-hide="true"` / `"false"` |
+| Gloss type config | `gloss_types.yaml` | `gloss_types` (replaces the whole entry), `gloss_labels` (label only) | — | — | `toggle-hide="true"` / `"false"`, `skip-label="true"` |
 | Topic-page headings (definitions table, सन्दर्भाः) | `labels:` | — | — | — | topic frontmatter / `meta.yaml` |
 | Gloss type left out of the site | `gloss_types.yaml` `exclude_site` | `gloss_types` (whole entry) | — | — | — |
 
