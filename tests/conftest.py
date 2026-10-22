@@ -4,16 +4,16 @@ Shared test harness for the ssengine scripts.
 Two kinds of test live in this directory:
 
 * In-process unit tests import the engine modules directly. The engine
-  reads `site_config.yaml`/`gloss_types.yaml` at import time, from the
-  directory of `sys.argv[0]` (see the ROOT comment in
-  generate_indices.py), so before importing anything we point
+  reads `config/site_config.yaml`/`config/gloss_types.yaml` at import
+  time, relative to the site root found from `sys.argv[0]` (see the ROOT
+  comment in generate_indices.py), so before importing anything we point
   `sys.argv[0]` at a small fixture site made just for these tests, then
   put it back.
 
 * End-to-end tests (`make_site` + `run_script`) build a throwaway site on
   disk that is wired up the same way the real content repos are: the
-  engine scripts are *symlinked* into `<site>/scripts/`, next to that
-  site's own site_config.yaml and gloss_types.yaml. Then the real script
+  engine scripts are *symlinked* into `<site>/scripts/`, and the site's
+  own site_config.yaml and gloss_types.yaml go in `<site>/config/`. Then the real script
   runs in a subprocess. This also covers the symlink/sys.argv[0] setup.
 """
 from __future__ import annotations
@@ -75,8 +75,8 @@ def _write_yaml(path: Path, data) -> None:
 # ---------------------------------------------------------------------------
 
 _IMPORT_SITE = Path(tempfile.mkdtemp(prefix="ssengine-import-site-"))
-_write_yaml(_IMPORT_SITE / "scripts" / "site_config.yaml", SITE_CONFIG)
-_write_yaml(_IMPORT_SITE / "scripts" / "gloss_types.yaml", GLOSS_TYPES)
+_write_yaml(_IMPORT_SITE / "config" / "site_config.yaml", SITE_CONFIG)
+_write_yaml(_IMPORT_SITE / "config" / "gloss_types.yaml", GLOSS_TYPES)
 
 _saved_argv0 = sys.argv[0]
 sys.argv[0] = str(_IMPORT_SITE / "scripts" / "generate_indices.py")
@@ -112,8 +112,8 @@ def make_site(root: Path, texts: dict[str, dict], site_config: dict | None = Non
     scripts.mkdir(parents=True, exist_ok=True)
     for name in ENGINE_FILES:
         os.symlink(ENGINE_SCRIPTS / name, scripts / name)
-    _write_yaml(scripts / "site_config.yaml", SITE_CONFIG if site_config is None else site_config)
-    _write_yaml(scripts / "gloss_types.yaml", GLOSS_TYPES if gloss_types is None else gloss_types)
+    _write_yaml(root / "config" / "site_config.yaml", SITE_CONFIG if site_config is None else site_config)
+    _write_yaml(root / "config" / "gloss_types.yaml", GLOSS_TYPES if gloss_types is None else gloss_types)
 
     for text_dir, spec in texts.items():
         d = root / text_dir

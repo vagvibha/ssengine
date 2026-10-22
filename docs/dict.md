@@ -23,7 +23,7 @@ script and the site build (see [site_config.md](site_config.md#strict-validation
 
 ### Site registry
 
-In `scripts/site_config.yaml`:
+In `config/site_config.yaml`:
 
 ```yaml
 dictionaries:

@@ -77,7 +77,7 @@ META_FILENAME = "meta.yaml"
 # Dictionary registry (site_config.yaml `dictionaries:`) + meta.yaml output
 # ---------------------------------------------------------------------------
 #
-# Each site's scripts/site_config.yaml declares which top-level dict/
+# Each site's config/site_config.yaml declares which top-level dict/
 # folders exist and what each dictionary is called:
 #
 #     dictionaries:

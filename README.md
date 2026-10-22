@@ -1,9 +1,9 @@
 # Static Site Engine
 
 Shared build-engine scripts for the साहित्यशास्त्रम् (sahitya) and शास्त्रम्
-(shastra) MkDocs sites. Each site's own repo keeps its own content,
-`gloss_types.yaml`, and `site_config.yaml` — this repo holds the Python
-engine code, pulled in as a git submodule at `scripts/`.
+(shastra) MkDocs sites. Each site's own repo keeps its own content and
+`config/` — this repo holds the Python engine code, pulled in as a git
+submodule at `scripts/ssengine`.
 
 ## What's here
 
@@ -27,9 +27,12 @@ engine code, pulled in as a git submodule at `scripts/`.
 - `macros_env.py` — the `xref()` Jinja macro for hand-authored
   cross-references.
 
-Each site keeps its own `gloss_types.yaml` and `site_config.yaml`
-directly in its own `scripts/` (not in this repo) — those are content
-decisions per site, not engine code.
+Each site keeps its own `config/` at its repo root (not in this repo):
+`site_config.yaml`, `gloss_types.yaml`, `stylesheets/` and
+`javascripts/` — those are per-site decisions, not engine code. `docs/`
+and `mkdocs.yml` are entirely generated (`config/stylesheets/` and
+`config/javascripts/` are copied into `docs/` on every run), so a site
+gitignores both.
 
 ## Reference docs
 
@@ -50,7 +53,7 @@ build instead of being silently ignored.
 
 ## Dictionaries (`dict/`)
 
-Each site declares its dictionaries in its own `scripts/site_config.yaml`:
+Each site declares its dictionaries in its own `config/site_config.yaml`:
 
 ```yaml
 dictionaries:
@@ -145,9 +148,9 @@ git add scripts .gitmodules
 git commit -m "Pull shared engine scripts in as a submodule"
 ```
 
-`gloss_types.yaml`/`site_config.yaml` stay exactly where they are in each
-site's own `scripts/` — only the six files above move into the
-submodule. Remember to set `topics: chandas_alankara: true` in
+`gloss_types.yaml`/`site_config.yaml` live in each site's own `config/`
+(with `stylesheets/` and `javascripts/`) — only the six files above live
+in the submodule. Remember to set `topics: chandas_alankara: true` in
 sahitya's `site_config.yaml` (shastra needs no change — false is the
 default).
 

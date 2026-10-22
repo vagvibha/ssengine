@@ -13,7 +13,7 @@ the same area (see [the end of this page](#chandas-and-alankara-glossaries)).
 
 ## Turning it on
 
-In `scripts/site_config.yaml`:
+In `config/site_config.yaml`:
 
 ```yaml
 topics:

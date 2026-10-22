@@ -8,10 +8,14 @@ and the `<topic>` tag are in [topics.md](topics.md).
 
 ```
 <site repo>/
-  scripts/
+  config/                      hand-maintained site settings and static files
     site_config.yaml           site-wide settings (below)
     gloss_types.yaml           gloss/commentary types (below)
+    stylesheets/               copied verbatim to docs/stylesheets/
+    javascripts/               copied verbatim to docs/javascripts/
+  scripts/
     ssengine/                  this engine (git submodule)
+    *.py                       symlinks into ssengine/scripts/
   [<content_root>/]            optional wrapper for everything below, down to assets/
   <section>/                   one per content_sections: entry, e.g. kavya/
     <group>/                   one per text_groups: entry (texts/ if none are declared)
@@ -28,7 +32,24 @@ and the `<topic>` tag are in [topics.md](topics.md).
 With `content_root: contents` in `site_config.yaml`, the sections,
 `topics/` and `assets/` all move under `contents/`. Generated output
 (`docs/`, `mkdocs.yml`, `dict/`) stays at the repo root, and page URLs
-don't change: they come from each section's `dir:` alone.
+don't change: they come from each section's `dir:` alone. `content_root`
+can't point inside `docs/`, `scripts/`, `dict/`, `site/` or `config/`.
+
+`docs/` and `mkdocs.yml` are **entirely generated**: every run of
+`generate_indices.py` deletes `docs/` and writes it again, and rewrites
+all of `mkdocs.yml` (its static settings come from the engine's template
+plus `site_name`, `theme` and `google_analytics_property` below). Neither
+holds anything hand-written, so a site's `.gitignore` lists both:
+
+```
+docs/
+mkdocs.yml
+```
+
+The build fails, before anything is deleted, if it finds the old layout:
+`site_config.yaml` or `gloss_types.yaml` still in `scripts/`, or a
+`docs/stylesheets/` or `docs/javascripts/` with no matching folder in
+`config/`.
 
 A `meta.yaml` directly inside `<section>/` is not read. Section-level
 display settings live in `site_config.yaml`'s `content_sections:`. Chapters
@@ -55,7 +76,7 @@ YAML file has:
 - **YAML that can't be parsed at all.**
 
 The allowed keys live in one place, the schema tables near the top of
-`scripts/generate_indices.py`. This document lists the same keys.
+`generate_indices.py`. This document lists the same keys.
 
 Kinds used below: **text** (a scalar; numbers are fine), **bool**
 (`true`/`false`), **list** (a YAML list, or a single value treated as a
@@ -63,7 +84,7 @@ one-item list), **mapping**.
 
 ---
 
-## `scripts/site_config.yaml` (per site)
+## `config/site_config.yaml` (per site)
 
 | Key | Kind | Meaning |
 |---|---|---|
@@ -114,7 +135,7 @@ and no link.
 
 ---
 
-## `scripts/gloss_types.yaml` (per site)
+## `config/gloss_types.yaml` (per site)
 
 | Key | Kind | Meaning |
 |---|---|---|

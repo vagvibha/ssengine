@@ -5,14 +5,14 @@ generate_indices.py
 
 Pre-build generation script, shared by every site built on this engine
 (साहित्यशास्त्रम्/sahitya and शास्त्रम्/shastra today — see
-scripts/site_config.yaml for what's specific to each). Nothing about a
+config/site_config.yaml for what's specific to each). Nothing about a
 particular site's name, content, or structure is hardcoded here; every
-site-specific choice is read from scripts/site_config.yaml and
-scripts/gloss_types.yaml.
+site-specific choice is read from config/site_config.yaml and
+config/gloss_types.yaml (at the site's repo root).
 
 What it does, in order:
 
-1.  Reads scripts/site_config.yaml, which declares the site's top-level
+1.  Reads config/site_config.yaml, which declares the site's top-level
     content sections purely as data — see that file's header comment for
     the schema. Adding a new section that follows the
     `<dir>/<group>/<slug>/...` convention needs no code changes here.
@@ -90,13 +90,17 @@ What it does, in order:
     content root, it is copied to `docs/about.md` (with the usual Home
     pill) and linked from a single small line at the bottom of the home
     page — deliberately NOT added to nav.
-7.  Writes `mkdocs.yml`, including an auto-generated `nav:` block.
+7.  Writes `mkdocs.yml`: the auto-generated `nav:` block plus the
+    engine's static settings (see MKDOCS_STATIC_TMPL). The whole file is
+    generated.
 
-This script is idempotent: it always starts by deleting only the generated
-output directory contents for each configured section, the topics output
-directory (if configured), `docs/assets/` (a fresh mirror of `assets/` —
-see below), `docs/index.md`, `docs/about.md`, and `mkdocs.yml` — never the hand-maintained
-`docs/stylesheets/`, `docs/javascripts/`, or any source directory.
+This script is idempotent: it always starts by deleting all of `docs/`,
+which is entirely generated, then copies `config/stylesheets/` and
+`config/javascripts/` into it verbatim, mirrors `assets/` into
+`docs/assets/` (see below) and writes everything else. Nothing
+hand-maintained lives in `docs/` or `mkdocs.yml`, so a site's
+`.gitignore` can list both; source directories and `config/` are never
+touched.
 
 Requires: PyYAML. beautifulsoup4 is only imported (lazily, inside
 build_glossary_page) when chandas_alankara is actually turned on for this
@@ -189,11 +193,17 @@ import dict_extract
 # regardless of which of the two is the entry point or how the other
 # gets imported.
 ROOT = Path(sys.argv[0]).absolute().parent.parent
-DOCS = ROOT / "docs"
-
 SCRIPTS_DIR = Path(sys.argv[0]).absolute().parent
-SITE_CONFIG_PATH = SCRIPTS_DIR / "site_config.yaml"
-GLOSS_TYPES_CONFIG_PATH = SCRIPTS_DIR / "gloss_types.yaml"
+
+# docs/ is entirely generated: every run deletes it and writes it again
+# (see clean_output). Everything hand-maintained that isn't content lives
+# in config/ at the repo root: the two YAML files below, plus the
+# STATIC_DIRS, which are copied verbatim into docs/ on every run.
+DOCS = ROOT / "docs"
+CONFIG_DIR = ROOT / "config"
+SITE_CONFIG_PATH = CONFIG_DIR / "site_config.yaml"
+GLOSS_TYPES_CONFIG_PATH = CONFIG_DIR / "gloss_types.yaml"
+STATIC_DIRS = ("stylesheets", "javascripts")
 
 META_FILENAMES = ("meta.yaml", "meta.yml")
 
@@ -430,6 +440,25 @@ def validate_chapter_meta(meta: dict, where: object) -> None:
         validate_chapter_toc(meta["toc"], f"{where}: toc")
 
 
+def check_site_layout() -> None:
+    """Fails on the pre-config/ layout instead of quietly misbehaving.
+    site_config.yaml/gloss_types.yaml used to live in scripts/, and
+    stylesheets/javascripts in docs/. A leftover scripts/ copy would be
+    silently ignored, and a hand-maintained docs/stylesheets/ would be
+    deleted by clean_output(), so both are hard errors, checked before
+    anything is read or written."""
+    for name in (SITE_CONFIG_PATH.name, GLOSS_TYPES_CONFIG_PATH.name):
+        old = SCRIPTS_DIR / name
+        if old.exists():
+            raise ConfigError(f"{old}: {name} has moved to config/{name} — move it there "
+                              f"(and don't keep a copy in scripts/)")
+    for name in STATIC_DIRS:
+        if (DOCS / name).is_dir() and not (CONFIG_DIR / name).is_dir():
+            raise ConfigError(f"{DOCS / name}: hand-maintained {name}/ has moved to config/{name}/ — "
+                              f"move it there; docs/ is now fully generated and is deleted on every run")
+
+
+check_site_layout()
 SITE_CONFIG = load_yaml(SITE_CONFIG_PATH)
 validate_site_config(SITE_CONFIG, SITE_CONFIG_PATH)
 if not SITE_CONFIG.get("content_sections"):
@@ -451,9 +480,9 @@ def resolve_content_root(cfg: dict, where: object) -> Path:
     if rel.is_absolute() or ".." in rel.parts:
         raise ConfigError(f"{where}: content_root {raw!r} must be a path inside the repo, "
                           f"relative to the repo root (e.g. \"contents\")")
-    if rel.parts[0] in ("docs", "scripts", "dict", "site"):
+    if rel.parts[0] in ("docs", "scripts", "dict", "site", "config"):
         raise ConfigError(f"{where}: content_root {raw!r} can't be inside {rel.parts[0]}/ — "
-                          f"that directory is generated or holds the engine")
+                          f"that directory is generated or holds the engine or site config")
     root = ROOT / rel
     if not root.is_dir():
         raise ConfigError(f"{where}: content_root {raw!r} does not exist ({root})")
@@ -955,7 +984,7 @@ class Text:
                 # values are shared across every Text that doesn't override them)
                 self.effective_gloss_types[key] = {**self.effective_gloss_types[key], "label": str(v).strip()}
         # whether a shloka's pada line breaks get put back as explicit
-        # <br /> tags (see extract_shlokas / docs/stylesheets/custom.css
+        # <br /> tags (see extract_shlokas / config/stylesheets/custom.css
         # for why .shloka can't just rely on CSS white-space for this
         # anymore). This text's own meta.yaml wins if it sets the key at
         # all (True OR False); otherwise falls back to the site-wide
@@ -2287,7 +2316,7 @@ class Shloka:
 def inject_shloka_linebreaks(inner: str) -> str:
     """Puts each pada back on its own visual line via explicit <br />
     tags — needed because .shloka uses white-space: normal (not
-    pre-line: see docs/stylesheets/custom.css for the rendering bug that
+    pre-line: see config/stylesheets/custom.css for the rendering bug that
     caused), so a plain source newline would otherwise collapse to a
     single space like any other markdown text. Only called when
     maintain_shloka_linebreak is on for this text (site_config.yaml,
@@ -2384,7 +2413,7 @@ def extract_shlokas(
 
 # ---------------------------------------------------------------------------
 # "Labeled hideable sections" — commentary-type content blocks, driven by
-# scripts/gloss_types.yaml (see that file for the full convention). Most
+# config/gloss_types.yaml (see that file for the full convention). Most
 # of these are <div class="gloss" data-type="...">, but a data-type entry
 # can instead declare class: vada (claim/refute) — see gloss_types.yaml.
 # Every one of these is labeled/marked hideable in place, in exactly the
@@ -2967,18 +2996,36 @@ def copy_about_page() -> bool:
 
 
 def clean_output():
-    for section in SECTIONS:
-        if section.out_dir.exists():
-            shutil.rmtree(section.out_dir)
-    if TOPICS_CONFIG and TOPICS_CONFIG.out_dir.exists():
-        shutil.rmtree(TOPICS_CONFIG.out_dir)
-    if ASSETS_OUT.exists():
-        shutil.rmtree(ASSETS_OUT)
-    for name in ("index.md", ABOUT_REL):
-        out = DOCS / name
-        if out.exists():
-            out.unlink()
-    DOCS.mkdir(parents=True, exist_ok=True)
+    """docs/ is entirely generated, so it's deleted outright and rebuilt.
+    Nothing hand-maintained lives there (check_site_layout() refuses the
+    old layout before we get here), and nothing stale from a removed
+    section, text or page can survive a run."""
+    if DOCS.exists():
+        shutil.rmtree(DOCS)
+    DOCS.mkdir(parents=True)
+
+
+def _ignore_dotfiles(_dir: str, names: list[str]) -> list[str]:
+    return [n for n in names if n.startswith(".")]
+
+
+# The files MKDOCS_STATIC_TMPL's extra_css/extra_javascript point at.
+STATIC_FILES_REFERENCED = ("stylesheets/custom.css", "javascripts/notes-toggle.js")
+
+
+def copy_static_dirs() -> None:
+    """Copies config/stylesheets/ and config/javascripts/ verbatim into
+    docs/ (dotfiles skipped), where mkdocs.yml's extra_css/
+    extra_javascript entries expect them. MkDocs doesn't complain about a
+    missing extra_css/extra_javascript file, even with --strict (the page
+    just loads without it), so a missing one is a warning here."""
+    for name in STATIC_DIRS:
+        src = CONFIG_DIR / name
+        if src.is_dir():
+            shutil.copytree(src, DOCS / name, ignore=_ignore_dotfiles)
+    for rel in STATIC_FILES_REFERENCED:
+        if not (DOCS / rel).is_file():
+            warn(f"config/{rel} not found — mkdocs.yml references it, so pages will load without it")
 
 
 def copy_assets() -> int:
@@ -2993,11 +3040,7 @@ def copy_assets() -> int:
     ...) are skipped. Returns the number of files copied."""
     if not ASSETS_SRC.exists():
         return 0
-
-    def ignore_dotfiles(_dir: str, names: list[str]) -> list[str]:
-        return [n for n in names if n.startswith(".")]
-
-    shutil.copytree(ASSETS_SRC, ASSETS_OUT, ignore=ignore_dotfiles)
+    shutil.copytree(ASSETS_SRC, ASSETS_OUT, ignore=_ignore_dotfiles)
     return sum(1 for p in ASSETS_OUT.rglob("*") if p.is_file())
 
 
@@ -3754,7 +3797,7 @@ def render_ref_page_sections(page: RefPage, definitions: list[TopicDefinition]) 
 # nested inside one (a topic is commonly referenced from texts across
 # several different sections — see process_topic_tags), so they get
 # their own card, in the same position every other card does. Cards are
-# plain <div class="sv-home-card">...</div> — docs/stylesheets/custom.css
+# plain <div class="sv-home-card">...</div> — config/stylesheets/custom.css
 # draws the box; add a new section to site_config.yaml and its card just
 # appears.
 # ---------------------------------------------------------------------------
@@ -3809,9 +3852,9 @@ def build_home_page(
 
 NAV_HEADER = """\
 # THIS FILE IS AUTO-GENERATED by scripts/generate_indices.py — do not edit
-# the `nav:` block by hand, it will be overwritten on the next run. Static
-# settings below `nav:` are safe to edit; the script only rewrites the
-# `nav:` list itself each time it runs.
+# it by hand, and don't commit it: the whole file is rewritten on every
+# run. The settings below `nav:` come from the engine's template plus
+# site_name/theme/google_analytics_property in config/site_config.yaml.
 """
 
 MKDOCS_STATIC_TMPL = """\
@@ -3906,7 +3949,7 @@ validation:
 
 
 def build_mkdocs_static() -> str:
-    """site_name/palette/language come from scripts/site_config.yaml (falls
+    """site_name/palette/language come from config/site_config.yaml (falls
     back to sensible defaults if that file is missing or a key is absent).
     `language:` is Material's OWN built-in UI-string translation
     mechanism (search box, footer, edit-this-page, the "Table of
@@ -3983,6 +4026,7 @@ def main():
         sys.exit(1)
 
     clean_output()
+    copy_static_dirs()
     n_assets = copy_assets()
     has_about = copy_about_page()
 
@@ -4096,7 +4140,7 @@ def main():
     # --- home page ---------------------------------------------------------
     write_md(DOCS / "index.md", build_home_page(sections_with_texts, topic_categories, special_entries, has_about))
 
-    # --- mkdocs.yml (nav auto-generated, static settings preserved) -------
+    # --- mkdocs.yml (nav + the engine's static template, all generated) --
     nav = build_nav(sections_with_texts, topic_categories, special_entries)
     mkdocs_yml = NAV_HEADER + "\n" + yaml_dump_nav(nav) + "\n" + build_mkdocs_static()
     write(ROOT / "mkdocs.yml", mkdocs_yml)
