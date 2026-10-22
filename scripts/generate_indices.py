@@ -173,27 +173,15 @@ import dict_extract
 # Paths / constants
 # ---------------------------------------------------------------------------
 #
-# Deliberately Path(sys.argv[0]) here, NOT Path(__file__) — this matters
-# once this file is reached via a symlink (e.g. scripts/generate_indices.py
-# -> scripts/engine/scripts/generate_indices.py, the shared-engine
-# submodule setup): __file__.resolve() follows the symlink to the
-# submodule's own internal scripts/ directory, giving the wrong ROOT no
-# matter which of .resolve()/.absolute() is used on it, since .absolute()
-# alone only fixes the case where THIS file is the one directly
-# executed — it still breaks the moment another sibling script (e.g.
-# generate_dict.py, also a symlink into the same submodule) imports this
-# module: Python resolves symlinks when computing sys.path[0] for the
-# entry script, so the import machinery can end up loading THIS file via
-# its real (submodule-internal) path instead of its symlinked one, and
-# __file__ reflects whichever path it was actually loaded through.
-# sys.argv[0], in contrast, is the literal invoked path (never symlink-
-# resolved) of whichever script started the process — generate_indices.py
-# or generate_dict.py, either way a symlink living directly in THIS
-# site's own scripts/ directory — so it's the one reliable anchor
-# regardless of which of the two is the entry point or how the other
-# gets imported.
-ROOT = Path(sys.argv[0]).absolute().parent.parent
-SCRIPTS_DIR = Path(sys.argv[0]).absolute().parent
+# The site root is the current directory: the scripts are always run from
+# the site's repo root (`python ssengine/scripts/generate_indices.py`), the
+# same way `mkdocs` finds mkdocs.yml. The engine itself is a git submodule
+# mounted at <site>/ssengine/ (ENGINE_REL), which the generated mkdocs.yml
+# points its hooks:/macros entries at; check_site_layout() makes sure the
+# engine actually running is that one.
+ROOT = Path.cwd()
+ENGINE_REL = "ssengine"
+ENGINE_DIR = Path(__file__).resolve().parent.parent
 
 # docs/ is entirely generated: every run deletes it and writes it again
 # (see clean_output). Everything hand-maintained that isn't content lives
@@ -441,14 +429,17 @@ def validate_chapter_meta(meta: dict, where: object) -> None:
 
 
 def check_site_layout() -> None:
-    """Fails on the pre-config/ layout instead of quietly misbehaving.
-    site_config.yaml/gloss_types.yaml used to live in scripts/, and
-    stylesheets/javascripts in docs/. A leftover scripts/ copy would be
-    silently ignored, and a hand-maintained docs/stylesheets/ would be
-    deleted by clean_output(), so both are hard errors, checked before
-    anything is read or written."""
+    """Fails on a wrong or outdated layout instead of quietly misbehaving,
+    checked before anything is read or written:
+    - site_config.yaml/gloss_types.yaml used to live in scripts/, and
+      stylesheets/javascripts in docs/. A leftover scripts/ copy would be
+      silently ignored, and a hand-maintained docs/stylesheets/ would be
+      deleted by clean_output().
+    - no config/site_config.yaml here means this isn't a site's repo root.
+    - the engine must be the one at <root>/ssengine/, since that's what
+      the generated mkdocs.yml's hooks:/macros entries load."""
     for name in (SITE_CONFIG_PATH.name, GLOSS_TYPES_CONFIG_PATH.name):
-        old = SCRIPTS_DIR / name
+        old = ROOT / "scripts" / name
         if old.exists():
             raise ConfigError(f"{old}: {name} has moved to config/{name} — move it there "
                               f"(and don't keep a copy in scripts/)")
@@ -456,6 +447,14 @@ def check_site_layout() -> None:
         if (DOCS / name).is_dir() and not (CONFIG_DIR / name).is_dir():
             raise ConfigError(f"{DOCS / name}: hand-maintained {name}/ has moved to config/{name}/ — "
                               f"move it there; docs/ is now fully generated and is deleted on every run")
+    if not SITE_CONFIG_PATH.is_file():
+        raise ConfigError(f"{SITE_CONFIG_PATH} not found — run the engine from the site's repo root "
+                          f"(e.g. python {ENGINE_REL}/scripts/generate_indices.py)")
+    expected = ROOT / ENGINE_REL
+    if not expected.is_dir() or expected.resolve() != ENGINE_DIR:
+        raise ConfigError(f"the engine must be mounted at {expected} (it's running from {ENGINE_DIR}); "
+                          f"the generated mkdocs.yml loads its hooks from {ENGINE_REL}/scripts/ — "
+                          f"e.g. git mv scripts/ssengine {ENGINE_REL}")
 
 
 check_site_layout()
@@ -480,7 +479,7 @@ def resolve_content_root(cfg: dict, where: object) -> Path:
     if rel.is_absolute() or ".." in rel.parts:
         raise ConfigError(f"{where}: content_root {raw!r} must be a path inside the repo, "
                           f"relative to the repo root (e.g. \"contents\")")
-    if rel.parts[0] in ("docs", "scripts", "dict", "site", "config"):
+    if rel.parts[0] in ("docs", "scripts", "dict", "site", "config", ENGINE_REL):
         raise ConfigError(f"{where}: content_root {raw!r} can't be inside {rel.parts[0]}/ — "
                           f"that directory is generated or holds the engine or site config")
     root = ROOT / rel
@@ -3851,7 +3850,7 @@ def build_home_page(
 # ---------------------------------------------------------------------------
 
 NAV_HEADER = """\
-# THIS FILE IS AUTO-GENERATED by scripts/generate_indices.py — do not edit
+# THIS FILE IS AUTO-GENERATED by ssengine/scripts/generate_indices.py — do not edit
 # it by hand, and don't commit it: the whole file is rewritten on every
 # run. The settings below `nav:` come from the engine's template plus
 # site_name/theme/google_analytics_property in config/site_config.yaml.
@@ -3859,7 +3858,7 @@ NAV_HEADER = """\
 
 MKDOCS_STATIC_TMPL = """\
 hooks:
-  - scripts/mkdocs_hooks.py
+  - ssengine/scripts/mkdocs_hooks.py
 
 site_name: {site_name}
 docs_dir: docs
@@ -3894,7 +3893,7 @@ extra_javascript:
 # https://mkdocs-macros-plugin.readthedocs.io/en/latest/pages/ for the
 # full templating surface (also reaches config/extra values, and lets a
 # page reference another page's frontmatter, conditionals, loops, etc.).
-# module_name: points at scripts/macros_env.py (HAND-MAINTAINED, not
+# module_name: points at ssengine/scripts/macros_env.py (HAND-MAINTAINED, not
 # regenerated — same convention as the mkdocs_hooks.py hooks: entry
 # below) — its define_env() registers custom Jinja macros callable from
 # any page's body, on top of the built-in page.meta.*/config access.
@@ -3910,7 +3909,7 @@ extra_javascript:
 plugins:
   - search
   - macros:
-      module_name: scripts/macros_env
+      module_name: ssengine/scripts/macros_env
       j2_comment_start_string: "{{##"
       j2_comment_end_string: "##}}"
 
@@ -3933,7 +3932,7 @@ markdown_extensions:
   - toc:
       permalink: true
       # Unicode-aware (Devanagari-safe) slugify is set via the on_config
-      # hook in scripts/mkdocs_hooks.py, not here — see that file's
+      # hook in ssengine/scripts/mkdocs_hooks.py, not here — see that file's
       # docstring for why: !!python/name: can only resolve genuinely
       # importable/installed packages, and a project-local file isn't
       # one, so this couldn't be a plain inline config value.

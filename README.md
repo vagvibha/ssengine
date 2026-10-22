@@ -3,7 +3,7 @@
 Shared build-engine scripts for the साहित्यशास्त्रम् (sahitya) and शास्त्रम्
 (shastra) MkDocs sites. Each site's own repo keeps its own content and
 `config/` — this repo holds the Python engine code, pulled in as a git
-submodule at `scripts/ssengine`.
+submodule at `ssengine/` in each site's repo root.
 
 ## What's here
 
@@ -105,9 +105,10 @@ python -m pytest
 `tests/` has unit tests for the helpers (gloss shorthand, div parsing,
 `<dict>`/`<dictref>` extraction, dict rendering and shloka keys, the
 dictionary registry and meta files, the slugify hook, `xref()`), plus
-end-to-end tests that build a small throwaway site. That site links the
-engine scripts in with symlinks, like a real content repo, and runs
-`generate_dict.py` / `generate_indices.py` in a subprocess.
+end-to-end tests that build a small throwaway site. That site mounts
+this repo at `ssengine/` (a symlink standing in for the submodule), like
+a real content repo, and runs `generate_dict.py` / `generate_indices.py`
+in a subprocess from the site root.
 `.github/workflows/tests.yml` runs the suite on every push to `main` and
 on every pull request.
 
@@ -123,40 +124,49 @@ git remote add origin git@github.com:<you>/ssengine.git
 git push -u origin main
 ```
 
-## Wiring it into each content repo as a submodule
+## Wiring it into a content repo
 
-From inside `sahitya/` (and separately, identically, inside `shastra/`):
+The engine is a git submodule mounted at `ssengine/` in the site's repo
+root. There are no symlinks and no site-level `scripts/` directory: every
+script is run from the site's repo root, which is how the engine finds
+the site (`config/`, the content, and where to write `docs/`,
+`mkdocs.yml` and `dict/`).
 
 ```bash
-# remove the now-duplicated copies that live directly in scripts/
-git rm scripts/generate_indices.py scripts/dict_extract.py scripts/dict_render.py \
-       scripts/generate_dict.py scripts/mkdocs_hooks.py scripts/macros_env.py
+git submodule add git@github.com:<you>/ssengine.git ssengine
 
-# add the ssengine repo as a submodule, checked out AT scripts/ssengine
-git submodule add git@github.com:<you>/ssengine.git scripts/engine
-
-# symlink (or copy, if you'd rather not symlink) each shared file back to
-# where mkdocs.yml/the build workflow expect to find it
-ln -s ssengine/scripts/generate_indices.py scripts/generate_indices.py
-ln -s ssengine/scripts/dict_extract.py scripts/dict_extract.py
-ln -s ssengine/scripts/dict_render.py scripts/dict_render.py
-ln -s ssengine/scripts/generate_dict.py scripts/generate_dict.py
-ln -s ssengine/scripts/mkdocs_hooks.py scripts/mkdocs_hooks.py
-ln -s ssengine/scripts/macros_env.py scripts/macros_env.py
-
-git add scripts .gitmodules
-git commit -m "Pull shared engine scripts in as a submodule"
+python ssengine/scripts/generate_indices.py   # docs/ + mkdocs.yml
+python ssengine/scripts/generate_dict.py      # dict/
+mkdocs build --strict
 ```
 
-`gloss_types.yaml`/`site_config.yaml` live in each site's own `config/`
-(with `stylesheets/` and `javascripts/`) — only the six files above live
-in the submodule. Remember to set `topics: chandas_alankara: true` in
-sahitya's `site_config.yaml` (shastra needs no change — false is the
-default).
+The generated `mkdocs.yml` loads its hooks and macros from
+`ssengine/scripts/`, so the engine must be mounted there. The scripts
+fail (before writing anything) if they're run from anywhere but the repo
+root, or if the engine running isn't the one at `<root>/ssengine/`.
+
+A site's own files: `config/` (`site_config.yaml`, `gloss_types.yaml`,
+`stylesheets/`, `javascripts/`), its content, and a `.gitignore` with
+`docs/` and `mkdocs.yml`. Remember to set
+`topics: chandas_alankara: true` in sahitya's `site_config.yaml` (other
+sites need no change — false is the default).
+
+### Moving from the old `scripts/ssengine` + symlinks setup
+
+From the site's repo root:
+
+```bash
+git mv scripts/ssengine ssengine       # moves the submodule and updates .gitmodules
+git rm scripts/generate_indices.py scripts/dict_extract.py scripts/dict_render.py \
+       scripts/generate_dict.py scripts/mkdocs_hooks.py scripts/macros_env.py
+```
+
+Then change `python scripts/<x>.py` to `python ssengine/scripts/<x>.py`
+in `.github/workflows/deploy.yml`.
 
 ### CI (`.github/workflows/deploy.yml`)
 
-Add `submodules: true` to the existing checkout step in both repos:
+The checkout step needs `submodules: true`:
 
 ```yaml
 - name: Checkout
@@ -165,16 +175,23 @@ Add `submodules: true` to the existing checkout step in both repos:
     submodules: true
 ```
 
+and the build steps run the engine from the repo root:
+
+```yaml
+- run: python ssengine/scripts/generate_indices.py
+- run: python ssengine/scripts/generate_dict.py
+```
+
 ### Updating the engine later
 
 Make the fix in a clone of this repo, commit, push. Then in each content
 repo:
 
 ```bash
-cd scripts/engine
+cd ssengine
 git pull origin main
-cd ../..
-git add scripts/engine
+cd ..
+git add ssengine
 git commit -m "Update engine submodule"
 ```
 

@@ -1,4 +1,4 @@
-"""End-to-end: run the real generate_dict.py (via symlinks, like the
+"""End-to-end: run the real generate_dict.py (engine mounted at ssengine/, like the
 content repos do) against a throwaway site and check what lands in dict/."""
 import copy
 

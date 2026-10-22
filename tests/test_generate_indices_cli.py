@@ -1,5 +1,5 @@
 """End-to-end smoke test: the real generate_indices.py builds a throwaway
-site (via symlinks) and the generated docs look sane."""
+site (engine mounted at ssengine/) and the generated docs look sane."""
 from conftest import make_site, run_script
 from test_generate_dict_cli import standard_texts
 

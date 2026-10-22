@@ -1,6 +1,6 @@
 # Dictionary generation (`dict/`)
 
-`scripts/generate_dict.py` reads the source `.md` files (never `docs/`)
+`ssengine/scripts/generate_dict.py` reads the source `.md` files (never `docs/`)
 and writes text files for the external dictionary-build tool:
 
 ```

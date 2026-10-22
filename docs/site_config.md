@@ -13,9 +13,8 @@ and the `<topic>` tag are in [topics.md](topics.md).
     gloss_types.yaml           gloss/commentary types (below)
     stylesheets/               copied verbatim to docs/stylesheets/
     javascripts/               copied verbatim to docs/javascripts/
-  scripts/
-    ssengine/                  this engine (git submodule)
-    *.py                       symlinks into ssengine/scripts/
+  ssengine/                    this engine (git submodule); run its scripts from the repo root:
+                               python ssengine/scripts/generate_indices.py
   [<content_root>/]            optional wrapper for everything below, down to assets/
   <section>/                   one per content_sections: entry, e.g. kavya/
     <group>/                   one per text_groups: entry (texts/ if none are declared)
@@ -33,7 +32,8 @@ With `content_root: contents` in `site_config.yaml`, the sections,
 `topics/` and `assets/` all move under `contents/`. Generated output
 (`docs/`, `mkdocs.yml`, `dict/`) stays at the repo root, and page URLs
 don't change: they come from each section's `dir:` alone. `content_root`
-can't point inside `docs/`, `scripts/`, `dict/`, `site/` or `config/`.
+can't point inside `docs/`, `scripts/`, `dict/`, `site/`, `config/` or
+`ssengine/`.
 
 `docs/` and `mkdocs.yml` are **entirely generated**: every run of
 `generate_indices.py` deletes `docs/` and writes it again, and rewrites
@@ -46,10 +46,18 @@ docs/
 mkdocs.yml
 ```
 
-The build fails, before anything is deleted, if it finds the old layout:
-`site_config.yaml` or `gloss_types.yaml` still in `scripts/`, or a
-`docs/stylesheets/` or `docs/javascripts/` with no matching folder in
-`config/`.
+The scripts are run from the site's repo root, and the engine must be
+mounted at `ssengine/` there (the generated `mkdocs.yml` loads its hooks
+and macros from `ssengine/scripts/`). The build fails, before anything is
+deleted, when:
+
+- there's no `config/site_config.yaml` in the current directory (not run
+  from the repo root);
+- the engine running isn't the one at `<root>/ssengine/` (e.g. still at
+  the old `scripts/ssengine`);
+- it finds the old layout: `site_config.yaml` or `gloss_types.yaml` still
+  in `scripts/`, or a `docs/stylesheets/` or `docs/javascripts/` with no
+  matching folder in `config/`.
 
 A `meta.yaml` directly inside `<section>/` is not read. Section-level
 display settings live in `site_config.yaml`'s `content_sections:`. Chapters

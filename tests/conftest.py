@@ -5,16 +5,17 @@ Two kinds of test live in this directory:
 
 * In-process unit tests import the engine modules directly. The engine
   reads `config/site_config.yaml`/`config/gloss_types.yaml` at import
-  time, relative to the site root found from `sys.argv[0]` (see the ROOT
-  comment in generate_indices.py), so before importing anything we point
-  `sys.argv[0]` at a small fixture site made just for these tests, then
-  put it back.
+  time, relative to the current directory (the site root — see the ROOT
+  comment in generate_indices.py), so before importing anything we
+  chdir into a small fixture site made just for these tests, then
+  chdir back.
 
 * End-to-end tests (`make_site` + `run_script`) build a throwaway site on
-  disk that is wired up the same way the real content repos are: the
-  engine scripts are *symlinked* into `<site>/scripts/`, and the site's
-  own site_config.yaml and gloss_types.yaml go in `<site>/config/`. Then the real script
-  runs in a subprocess. This also covers the symlink/sys.argv[0] setup.
+  disk that is wired up the same way the real content repos are: this
+  engine repo is mounted at `<site>/ssengine` (a symlink standing in for
+  the git submodule), and the site's own site_config.yaml and
+  gloss_types.yaml go in `<site>/config/`. Then the real script runs in a
+  subprocess, from the site root: `python ssengine/scripts/<script>`.
 """
 from __future__ import annotations
 
@@ -27,11 +28,8 @@ from pathlib import Path
 import pytest
 import yaml
 
-ENGINE_SCRIPTS = Path(__file__).resolve().parent.parent / "scripts"
-ENGINE_FILES = [
-    "generate_indices.py", "dict_extract.py", "dict_render.py",
-    "generate_dict.py", "mkdocs_hooks.py", "macros_env.py",
-]
+ENGINE_REPO = Path(__file__).resolve().parent.parent
+ENGINE_SCRIPTS = ENGINE_REPO / "scripts"
 
 # Gloss types used by both the in-process fixture site and make_site()
 # unless a test overrides them. Mirrors the kinds of entries real sites
@@ -77,9 +75,10 @@ def _write_yaml(path: Path, data) -> None:
 _IMPORT_SITE = Path(tempfile.mkdtemp(prefix="ssengine-import-site-"))
 _write_yaml(_IMPORT_SITE / "config" / "site_config.yaml", SITE_CONFIG)
 _write_yaml(_IMPORT_SITE / "config" / "gloss_types.yaml", GLOSS_TYPES)
+os.symlink(ENGINE_REPO, _IMPORT_SITE / "ssengine")
 
-_saved_argv0 = sys.argv[0]
-sys.argv[0] = str(_IMPORT_SITE / "scripts" / "generate_indices.py")
+_saved_cwd = os.getcwd()
+os.chdir(_IMPORT_SITE)
 sys.path.insert(0, str(ENGINE_SCRIPTS))
 try:
     import generate_indices  # noqa: E402,F401  (import for its side effects)
@@ -87,7 +86,7 @@ try:
     import dict_render  # noqa: E402,F401
     import generate_dict  # noqa: E402,F401
 finally:
-    sys.argv[0] = _saved_argv0
+    os.chdir(_saved_cwd)
 
 
 @pytest.fixture
@@ -108,10 +107,8 @@ def make_site(root: Path, texts: dict[str, dict], site_config: dict | None = Non
     `texts` maps a text dir (e.g. "kavya/padya/ks") to
         {"meta": {...}, "chapters": {"01": {"meta": {...} | None, "files": {"01.md": "..."}}}}
     """
-    scripts = root / "scripts"
-    scripts.mkdir(parents=True, exist_ok=True)
-    for name in ENGINE_FILES:
-        os.symlink(ENGINE_SCRIPTS / name, scripts / name)
+    root.mkdir(parents=True, exist_ok=True)
+    os.symlink(ENGINE_REPO, root / "ssengine")
     _write_yaml(root / "config" / "site_config.yaml", SITE_CONFIG if site_config is None else site_config)
     _write_yaml(root / "config" / "gloss_types.yaml", GLOSS_TYPES if gloss_types is None else gloss_types)
 
@@ -130,7 +127,7 @@ def make_site(root: Path, texts: dict[str, dict], site_config: dict | None = Non
 
 def run_script(site: Path, script: str, *args: str) -> subprocess.CompletedProcess:
     return subprocess.run(
-        [sys.executable, f"scripts/{script}", *args],
+        [sys.executable, f"ssengine/scripts/{script}", *args],
         cwd=site, capture_output=True, text=True, encoding="utf-8",
     )
 
