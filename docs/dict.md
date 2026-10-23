@@ -64,6 +64,40 @@ The build fails if:
   `details`, or names something unknown
 - `nav` is set on a notes chapter, or without `shloka_key_prefix`
 
+### Section frontmatter
+
+A section `.md` inside a chapter directory may have its own `dict:` block:
+
+```yaml
+---
+dict:
+  title: "[शूद्रकवर्णनम्]"   # appended after the chapter's dict.title
+  syns: [अ, आ]              # shloka chapters: per-verse fallback (see below)
+  skip: [इ]                 # shloka chapters: per-verse fallback (see below)
+---
+```
+
+`HEADER:title=` is the book title, the chapter's `dict.title`, then the
+section's `dict.title`, space-separated; empty parts are left out.
+
+The build fails if:
+- a section sets any other chapter key (`type`, `chapter_key`, …) —
+  those go in the chapter's `meta.yaml`
+- more than one section of a chapter sets `title` (a chapter has one
+  dict file and one header)
+- a section sets `title` but the chapter's `meta.yaml` has no `dict:`
+  block (nothing would use it)
+- `title` is empty
+
+### Single-file chapters
+
+A chapter that is a single top-level `.md` file (no chapter directory)
+has no `meta.yaml`, so its frontmatter `dict:` block takes the place of
+the chapter `meta.yaml` one: the same keys, checked the same way, plus
+`syns` (per-verse fallback, as above). Here `skip` is the chapter's
+`HEADER:skip=`, not a per-verse fallback. Without a `dict:` block the
+chapter writes no dict output, as before.
+
 ---
 
 ## Markup
@@ -116,7 +150,7 @@ build.
 ## Notes format (`type: notes`)
 
 ```
-HEADER:title=<book title> <dict.title>
+HEADER:title=<book title> <dict.title> <section dict.title>
 HEADER:type=notes
 HEADER:skip=w1;w2            (only when skip is non-empty)
 - syn1;syn2
@@ -182,7 +216,7 @@ No `<dict>` tags; a stray one is warned about and ignored. Each
 from that div up to the next shloka div, or the end of the file.
 
 ```
-HEADER:title=<book title> <dict.title>
+HEADER:title=<book title> <dict.title> <section dict.title>
 HEADER:type=shloka
 HEADER:skip=w1;w2            (only when skip is non-empty)
 HEADER:show_anvaya=false     (always)
@@ -201,7 +235,8 @@ HEADER:auto_shloka=false     (only when auto_shloka: false)
 ```
 
 - **syns / skip per shloka:** the div's own `syns=` / `skip=` attributes,
-  or else the section file's frontmatter `dict: {syns, skip}`.
+  or else the section file's frontmatter `dict: {syns, skip}` (`syns` only,
+  in a [single-file chapter](#single-file-chapters)).
 - A shloka with neither syns nor a generated key is skipped with a
   warning.
 

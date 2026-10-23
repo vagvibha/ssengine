@@ -291,6 +291,17 @@ CHAPTER_DICT_KEYS = {
     "type": "str", "title": "str", "skip": "list", "auto_shloka": "bool",
     "chapter_key": "str", "shloka_key_prefix": "str", "tags_keep": "list", "nav": "bool",
 }
+# `dict:` in a section .md's frontmatter (chapter directory): `title` is
+# appended to the chapter's dict.title in HEADER:title=; `syns`/`skip`
+# are the file-level fallback for a shloka chapter's per-verse syns/skip
+# (see generate_dict.process_shloka_chapter). Every other chapter dict key
+# is chapter-wide and lives in the chapter's meta.yaml. A top-level
+# single-.md chapter has no meta.yaml, so its frontmatter `dict:` takes
+# TOP_LEVEL_MD_DICT_KEYS instead — see section_dict_title / discover_chapters.
+SECTION_DICT_KEYS = {"title": "str", "syns": "list", "skip": "list"}
+# There `skip` is the chapter's HEADER:skip (as in meta.yaml), not the
+# per-verse fallback; `syns` keeps its per-verse meaning.
+TOP_LEVEL_MD_DICT_KEYS = {**CHAPTER_DICT_KEYS, "syns": "list"}
 TOPIC_CATEGORY_META_KEYS = {"title": "str", "order": "str", "expanded_by_default": "bool"}
 # Per-topic overrides of the matching site_config.yaml labels: keys, for
 # the auto-generated परिभाषाः table and सन्दर्भाः list on that topic's page
@@ -1066,6 +1077,13 @@ class Chapter:
         self.slug = slug
         self.sections = sections  # list of source .md Paths, in order
         self.meta = meta or {}
+        # `dict.title` from one section's frontmatter, appended after the
+        # chapter's own dict.title in HEADER:title= — see discover_chapters.
+        self.section_dict_title = ""
+        # True for a top-level single-.md chapter: its meta (only ever a
+        # `dict:` block) came from that file's frontmatter, so dict.skip
+        # there is the chapter's HEADER:skip, not a per-verse fallback.
+        self.dict_from_frontmatter = False
         # sections mode with a `toc:` only — see resolve_chapter_toc
         self.toc: list["TocEntry"] | None = None
 
@@ -1279,6 +1297,32 @@ def resolve_chapter_toc(
     return resolved
 
 
+def section_dict_title(fm: dict, f: Path, chapter_dir: Path) -> str:
+    """Validates a section's frontmatter `dict:` block (SECTION_DICT_KEYS)
+    and returns its `title` add-on ("" if none). A chapter-wide dict key
+    here is a hard error pointing at the chapter's meta.yaml, where it
+    belongs."""
+    block = fm.get("dict")
+    if block is None:
+        return ""
+    where = f"{f} (frontmatter): dict"
+    if not isinstance(block, dict):
+        raise ConfigError(f"{where} should be a mapping (e.g. `dict:\\n  title: ...`), got {block!r}")
+    chapter_wide = sorted(k for k in block if k not in SECTION_DICT_KEYS and k in CHAPTER_DICT_KEYS)
+    if chapter_wide:
+        raise ConfigError(
+            f"{where}: {', '.join(chapter_wide)} apply to the whole chapter — set them in "
+            f"{chapter_dir}/meta.yaml's dict: block. Allowed here: {', '.join(SECTION_DICT_KEYS)}."
+        )
+    check_keys(block, SECTION_DICT_KEYS, where)
+    if "title" not in block:
+        return ""
+    title = str(block.get("title") or "").strip()
+    if not title:
+        raise ConfigError(f"{where}: title is empty")
+    return title
+
+
 def discover_chapters(text: Text) -> list[Chapter]:
     """A chapter is either a subdirectory of section files, or (if no
     directory of the same name exists) a single top-level .md file. A
@@ -1295,6 +1339,7 @@ def discover_chapters(text: Text) -> list[Chapter]:
             continue
         sections = []
         ignored_stems: set[str] = set()
+        dict_titles: list[tuple[Path, str]] = []  # (section, its frontmatter dict.title)
         for f in sorted(d.glob("*.md"), key=lambda f: f.stem):
             fm, _ = split_frontmatter(f.read_text(encoding="utf-8"))
             if fm.get("ignore"):
@@ -1302,10 +1347,26 @@ def discover_chapters(text: Text) -> list[Chapter]:
                 ignored_stems.add(f.stem)
                 continue
             sections.append(f)
+            title = section_dict_title(fm, f, d)
+            if title:
+                dict_titles.append((f, title))
         if not sections:
             warn(f"chapter directory {d} contains no .md sections — skipping")
             continue
+        if len(dict_titles) > 1:
+            raise ConfigError(
+                f"{d}: dict.title is set in more than one section's frontmatter "
+                f"({', '.join(f.name for f, _ in dict_titles)}) — the chapter has one dict "
+                f"file and one HEADER:title, so set it in one section only"
+            )
+        if dict_titles and not chapter_meta.get("dict"):
+            raise ConfigError(
+                f"{dict_titles[0][0]} (frontmatter): dict.title is set, but {d} has no dict: "
+                f"block in its meta.yaml, so the chapter writes no dict output and the title "
+                f"would never be used"
+            )
         chapter = Chapter(text, name, sections, chapter_meta)
+        chapter.section_dict_title = dict_titles[0][1] if dict_titles else ""
         if chapter.display_style == "sections" and chapter_meta.get("toc") is not None:
             chapter.toc = resolve_chapter_toc(
                 chapter_meta["toc"], sections, ignored_stems, f"{find_meta_file(d) or d}: toc",
@@ -1324,7 +1385,16 @@ def discover_chapters(text: Text) -> list[Chapter]:
         if fm.get("ignore"):
             print(f"Skipping {f} (ignore: true in frontmatter)")
             continue
-        chapters.append(Chapter(text, f.stem, [f]))
+        # No meta.yaml for a single-file chapter, so its frontmatter dict:
+        # block stands in for the chapter meta.yaml's one (same keys).
+        meta = {}
+        if fm.get("dict") is not None:
+            check_keys({"dict": fm["dict"]}, {"dict": "map"}, f"{f} (frontmatter)")
+            check_keys(fm["dict"], TOP_LEVEL_MD_DICT_KEYS, f"{f} (frontmatter): dict")
+            meta = {"dict": fm["dict"]}
+        chapter = Chapter(text, f.stem, [f], meta)
+        chapter.dict_from_frontmatter = True
+        chapters.append(chapter)
 
     chapters.sort(key=lambda c: c.slug)
     return chapters

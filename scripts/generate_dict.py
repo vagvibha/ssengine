@@ -211,6 +211,7 @@ class DictConfig:
             )
         self.type = str(block.get("type", "")).strip().lower()
         self.title = str(block.get("title", "")).strip()
+        self.section_title = chapter.section_dict_title  # from a section's frontmatter — see gi.discover_chapters
         self.skip = gi.as_list(block.get("skip"))
         self.auto_shloka = bool(block.get("auto_shloka", True))
         self.chapter_key = str(block.get("chapter_key", "")).strip()
@@ -269,8 +270,11 @@ def out_dir_for(config: DictConfig, text: gi.Text) -> Path:
 def base_header(text: gi.Text, config: DictConfig, type_: str, skip: list[str]) -> list[str]:
     """HEADER:title/type, plus HEADER:skip=... only when `skip` is
     non-empty — an empty `dict.skip` is the default (no words to skip),
-    so a bare "HEADER:skip=" line for it would just be noise."""
-    header = [f"HEADER:title={text.title} {config.title}", f"HEADER:type={type_}"]
+    so a bare "HEADER:skip=" line for it would just be noise. The title
+    is the book title, the chapter's dict.title, then a section's
+    frontmatter dict.title, space-separated, empty parts dropped."""
+    title = " ".join(p for p in (text.title, config.title, config.section_title) if p)
+    header = [f"HEADER:title={title}", f"HEADER:type={type_}"]
     if skip:
         header.append(f"HEADER:skip={';'.join(skip)}")
     return header
@@ -466,7 +470,9 @@ def process_shloka_chapter(text: gi.Text, chapter: gi.Chapter, config: DictConfi
 
         fm_dict = fm.get("dict") or {}
         file_syns = gi.as_list(fm_dict.get("syns"))
-        file_skip = gi.as_list(fm_dict.get("skip"))
+        # In a top-level single-.md chapter, frontmatter dict.skip is the
+        # chapter's HEADER:skip (see gi.Chapter.dict_from_frontmatter).
+        file_skip = [] if chapter.dict_from_frontmatter else gi.as_list(fm_dict.get("skip"))
 
         tree = gi.parse_divs(body)
         shloka_nodes = [n for n in tree if n.base_cls == "shloka"]
