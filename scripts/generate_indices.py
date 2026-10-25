@@ -2461,6 +2461,10 @@ def extract_shlokas(
             highlight = shloka_highlight_default if hl_attr not in ("true", "false") else (hl_attr == "true")
             toc_attr = attrs.get("toc", "").strip().lower()
             toc = shloka_toc_default if toc_attr not in ("true", "false") else (toc_attr == "true")
+            if attrs.get(EXTRACTED_ATTR) == "true":
+                # pulled in by <extract/> (see expand_extracts): it's
+                # listed and referenced on its own page already
+                toc, chandas, alankaras = False, "", []
 
             inner = body[node.tag_end:node.inner_end]
             anchor = f"s{counter}"
@@ -3322,6 +3326,254 @@ def section_display_title(fm: dict, stem: str) -> str:
     return stem
 
 
+# ---------------------------------------------------------------------------
+# <extract href="..." heading="..." types="..."/> — pull a passage from
+# another section file of the same text instead of copy/pasting it
+# ---------------------------------------------------------------------------
+#
+# Expanded first thing on a section body (see expand_extracts), so the
+# pulled text goes through the rest of the pipeline exactly like text
+# typed in place: gloss labels, default_class, heading checks, shlokas.
+# What must NOT carry over is stripped from the pulled text beforehand:
+# <dict>/<dictref> (dictionary output is never affected) and <topic> tags
+# (their content stays; otherwise every topic page would get a duplicate
+# back-reference/definition). Pulled shloka divs get data-extracted="true"
+# — still shown and anchored, but kept out of the श्लोकसूची and of the
+# chandas/alankara back-references (see extract_shlokas).
+
+class ExtractError(ValueError):
+    """An <extract/> tag the build can't use as written. Always fatal."""
+
+
+EXTRACT_TAG_RE = re.compile(r'<extract\b((?:[^>"]|"[^"]*")*?)(/?)>', re.IGNORECASE)
+EXTRACT_CLOSE_RE = re.compile(r"</extract\s*>", re.IGNORECASE)
+EXTRACT_ATTRS = ("href", "heading", "types")
+EXTRACTED_ATTR = "data-extracted"
+# Placeholder for the "↗ source" link, swapped for the real link only
+# after process_content_sections/extract_shlokas (see
+# resolve_extract_links). An HTML comment, so default_class wrapping
+# never treats it as content (see has_real_content).
+EXTRACT_LINK_MARK = "<!--sv-extract-source-{}-->"
+
+
+def _find_section_chapter(text: "Text", target: Path) -> tuple["Chapter", int] | None:
+    target = target.resolve()
+    for ch in text.chapters:
+        for i, s in enumerate(ch.sections):
+            if s.resolve() == target:
+                return ch, i
+    return None
+
+
+def _extract_heading_scope(body: str, heading: str, where: str) -> tuple[int, int, "DivNode | None"]:
+    """(start, end, enclosing div) of the passage under `heading`: from
+    the line after the heading to the next heading of the same or a
+    higher level in the same div (or that div's end, or end of file).
+    The heading itself is left out. Exactly one matching heading."""
+    offsets, pos = [], 0
+    for line in body.splitlines(keepends=True):
+        offsets.append(pos)
+        pos += len(line)
+    offsets.append(pos)
+    headings = [(offsets[n - 1], offsets[n], level, line) for n, level, line in atx_heading_levels(body)]
+    matches = [h for h in headings if heading_text_and_id(h[3])[0] == heading]
+    if not matches:
+        raise ExtractError(f"{where}: no heading '{heading}' in the target file")
+    if len(matches) > 1:
+        raise ExtractError(f"{where}: heading '{heading}' appears {len(matches)} times in the target file "
+                           f"— it must be unique there")
+    h_start, scope_start, level, _ = matches[0]
+    tree = parse_divs(body)
+
+    def enclosing(p: int) -> "DivNode | None":
+        found, nodes = None, tree
+        while True:
+            inner = next((n for n in nodes if n.tag_end <= p < n.inner_end), None)
+            if inner is None:
+                return found
+            found, nodes = inner, inner.children
+
+    container = enclosing(h_start)
+    end = container.inner_end if container else len(body)
+    for s, _, lv, _ in headings:
+        if s > h_start and lv <= level and enclosing(s) is container and s < end:
+            end = s
+            break
+    return scope_start, end, container
+
+
+def _filter_by_types(
+    body: str, start: int, end: int, nodes: list["DivNode"], names: set[str], gap_name: str,
+    source: "Chapter", gloss_classes: set[str],
+) -> list[str]:
+    """The parts of body[start:end] whose type is in `names`: a matching
+    div whole (with everything nested in it); a non-matching div is
+    searched for matching divs inside it. Text outside any div counts as
+    `gap_name` (the source's default_class, or the enclosing div's type)."""
+    def name_of(n: "DivNode") -> str:
+        if n.base_cls == "shloka":
+            return parse_attrs(n.attrs_str).get("data-type", "").strip().lower() or source.default_shloka_type.lower()
+        if n.base_cls in gloss_classes:
+            return parse_attrs(n.attrs_str).get("data-type", "").strip().lower()
+        return n.base_cls
+
+    def keep(n: "DivNode") -> bool:
+        return name_of(n) in names or (n.base_cls == "shloka" and "shloka" in names)
+
+    out: list[str] = []
+    keep_gaps = gap_name in names
+    blocks = find_unsplittable_blocks(body, start, end, nodes) if keep_gaps else []
+
+    def gap(s: int, e: int) -> None:
+        if keep_gaps and s < e and has_real_content(body[s:e]):
+            out.append(body[s:e].strip("\n"))
+
+    pos = start
+    for n in nodes:
+        if n.end <= pos:
+            continue  # inside an unsplittable block already taken whole
+        block = next((b for b in blocks if b[0] <= n.start < b[1]), None)
+        if block:
+            gap(pos, block[1])  # a <details>/<table> in kept text stays whole, divs and all
+            pos = block[1]
+            continue
+        gap(pos, n.start)
+        if keep(n):
+            out.append(body[n.start:n.end])
+        elif n.base_cls != "shloka":
+            structural = n.base_cls not in gloss_classes
+            out += _filter_by_types(body, n.tag_end, n.inner_end, n.children, names,
+                                    gap_name if structural else name_of(n), source, gloss_classes)
+        pos = n.end
+    gap(pos, end)
+    return out
+
+
+def _mark_extracted_shlokas(text: str, default_shloka_type: str) -> str:
+    """data-extracted="true" on every shloka div, plus the source
+    chapter's default data-type where the div has none (the extract
+    page's own default_shloka_type may differ)."""
+    splices: list[tuple[int, int, str]] = []
+
+    def walk(nodes: list["DivNode"]) -> None:
+        for n in nodes:
+            if n.base_cls == "shloka":
+                add = f' {EXTRACTED_ATTR}="true"'
+                if default_shloka_type and not parse_attrs(n.attrs_str).get("data-type", "").strip():
+                    add += f' data-type="{default_shloka_type}"'
+                splices.append((n.tag_end - 1, n.tag_end - 1, add))
+            else:
+                walk(n.children)
+
+    walk(parse_divs(text))
+    return apply_splices(text, splices) if splices else text
+
+
+def expand_extracts(body: str, section: Path, chapter: "Chapter", page_rel_file: str) -> tuple[str, list[str]]:
+    """Replace every `<extract href="..." heading="..." types="..."/>` in
+    a section body with the passage it names. Returns (body, links): each
+    pulled passage ends in an EXTRACT_LINK_MARK placeholder whose
+    "↗ source" link HTML is links[i] (see resolve_extract_links).
+
+    href: a section .md file of this same text, relative to this file.
+    heading: optional — only the passage under that heading (heading
+    excluded). types: optional, comma-separated gloss/shloka data-types
+    (or "shloka" for any verse) — only those parts are kept."""
+    links: list[str] = []
+    if EXTRACT_CLOSE_RE.search(body):
+        raise ExtractError(f"{section}: </extract> — <extract .../> is self-closing, with no closing tag")
+    text = chapter.text
+    gloss_types = text.effective_gloss_types
+    gloss_classes = recognized_div_classes(gloss_types)
+
+    def expand(m: re.Match) -> str:
+        where = f"{section}: {m.group(0)}"
+        if not m.group(2):
+            raise ExtractError(f"{where} — must be self-closing: <extract .../>")
+        attrs = parse_attrs(m.group(1))
+        unknown = sorted(set(attrs) - set(EXTRACT_ATTRS))
+        leftover = ATTR_RE.sub("", m.group(1)).strip()
+        if unknown or leftover:
+            raise ExtractError(f"{where} — unknown attribute(s) {', '.join(unknown) or leftover!r}; "
+                               f"allowed: {', '.join(EXTRACT_ATTRS)}")
+        href = attrs.get("href", "").strip()
+        if not href.endswith(".md"):
+            raise ExtractError(f"{where} — href= must name a .md file")
+        target = section.parent / href
+        if target.resolve() == section.resolve():
+            raise ExtractError(f"{where} — a file can't extract from itself")
+        found = _find_section_chapter(text, target)
+        if found is None:
+            raise ExtractError(f"{where} — {target} is not a section file of this text "
+                               f"(missing, ignored, or in another text)")
+        src_chapter, src_index = found
+        if src_chapter is chapter and chapter.display_style != "sections":
+            raise ExtractError(f"{where} — the target is in this same chapter, which is full_chapter: "
+                               f"its content is already on this page. Extracting from the same "
+                               f"chapter needs chapter_display_style: sections")
+        fm, src = split_frontmatter(target.read_text(encoding="utf-8"))
+        if EXTRACT_TAG_RE.search(src):
+            raise ExtractError(f"{where} — the target itself contains <extract/>; extracts can't be nested")
+
+        src = expand_gloss_shorthand(src, gloss_types, source_for_warning=target)
+        src = strip_excluded_glosses(src, gloss_types)
+        src, _ = dict_extract.extract_dict_and_ref_tags(src, source_for_warning=target)
+        src = TOPIC_CLOSE_RE.sub("", TOPIC_OPEN_RE.sub("", src))
+
+        heading = attrs.get("heading", "").strip()
+        container = None
+        start, end = 0, len(src)
+        if "heading" in attrs:
+            if not heading:
+                raise ExtractError(f"{where} — heading= is empty")
+            start, end, container = _extract_heading_scope(src, heading, where)
+
+        if "types" in attrs:
+            names = {t.strip().lower() for t in attrs["types"].split(",") if t.strip()}
+            if not names:
+                raise ExtractError(f"{where} — types= is empty")
+            shloka_types = {text.default_shloka_type.lower()} | {
+                c.default_shloka_type.lower() for c in text.chapters}
+            shloka_types |= {parse_attrs(t).get("data-type", "").strip().lower()
+                             for t in re.findall(r'<div\b([^>]*class="shloka[^>]*)>', src)}
+            bad = sorted(n for n in names if n not in gloss_types and n not in shloka_types and n != "shloka")
+            if bad:
+                raise ExtractError(f"{where} — unknown type(s) {', '.join(bad)}: not a gloss type of this "
+                                   f"text, a shloka data-type in use, or 'shloka'")
+            if container is not None and container.base_cls in gloss_classes | {"shloka"}:
+                gap_name = parse_attrs(container.attrs_str).get("data-type", "").strip().lower()
+            else:
+                div_cls, type_key = resolve_default_class(src_chapter.default_class, gloss_types)
+                gap_name = type_key or div_cls
+            nodes = container.children if container else parse_divs(src)
+            nodes = [n for n in nodes if n.start >= start and n.end <= end]
+            parts = _filter_by_types(src, start, end, nodes, names, gap_name, src_chapter, gloss_classes)
+            pulled = "\n\n".join(parts)
+        else:
+            pulled = src[start:end].strip("\n")
+
+        pulled = _mark_extracted_shlokas(pulled, src_chapter.default_shloka_type)
+
+        if src_chapter.display_style == "sections":
+            src_rel, anchor = src_chapter.section_rel_out_file(target), ""
+        else:
+            src_rel, anchor = src_chapter.rel_out_file, f"#sec{src_index + 1}"
+        label = section_display_title(fm, target.stem)
+        if src_chapter is not chapter:
+            label = f"{src_chapter.nav_label} — {label}"
+        href_out = raw_html_href(page_rel_file, src_rel) + anchor
+        links.append(f'<p class="sv-extract-source"><a href="{href_out}">↗ {html.escape(label)}</a></p>')
+        return f"\n\n{pulled}\n\n{EXTRACT_LINK_MARK.format(len(links) - 1)}\n\n"
+
+    return EXTRACT_TAG_RE.sub(expand, body), links
+
+
+def resolve_extract_links(body: str, links: list[str]) -> str:
+    for i, link in enumerate(links):
+        body = body.replace(EXTRACT_LINK_MARK.format(i), link)
+    return body
+
+
 def build_shloka_table(
     current_rel_file: str, all_shlokas: list[Shloka], chandas: dict[str, "TableEntry"], alankaras: dict[str, "TableEntry"]
 ) -> list[str]:
@@ -3409,6 +3661,7 @@ def render_chapter_full(
     for i, section in enumerate(chapter.sections):
         raw = section.read_text(encoding="utf-8")
         fm, body = split_frontmatter(raw)
+        body, extract_links = expand_extracts(body, section, chapter, current_rel_file)
         body = expand_gloss_shorthand(
             body, chapter.text.effective_gloss_types, source_for_warning=section,
         )
@@ -3436,6 +3689,7 @@ def render_chapter_full(
                 if a not in alankaras:
                     warn(f"{section} references unknown alankara '{a}' (no data-glossary-entry row for it in the alankara glossary)")
         all_shlokas.extend(shlokas)
+        body = resolve_extract_links(body, extract_links)
         body_parts.append(f'<div id="{anchor}"></div>\n\n{body.strip()}')
 
     up_target, up_label = chapter.text.up_target
@@ -3661,6 +3915,7 @@ def render_chapter_sections(
     for i, section in enumerate(chapter.sections):
         raw = section.read_text(encoding="utf-8")
         fm, body = split_frontmatter(raw)
+        body, extract_links = expand_extracts(body, section, chapter, chapter.section_rel_out_file(section))
         body = expand_gloss_shorthand(body, chapter.text.effective_gloss_types, source_for_warning=section)
         body = strip_excluded_glosses(body, chapter.text.effective_gloss_types)
         body, _dict_captures = dict_extract.extract_dict_and_ref_tags(body, source_for_warning=section)
@@ -3697,6 +3952,7 @@ def render_chapter_sections(
             chapter, chandas, alankaras, list(enumerate(shlokas, start=1)),
             page_rel_out_file=section_rel_file, section_title=display_title,
         )
+        body = resolve_extract_links(body, extract_links)
 
         prev_sec = chapter.sections[i - 1] if i > 0 else None
         next_sec = chapter.sections[i + 1] if i < len(chapter.sections) - 1 else None

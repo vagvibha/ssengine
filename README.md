@@ -43,6 +43,9 @@ gitignores both.
 - [`docs/topics.md`](docs/topics.md) — the topics area: topic pages, the
   `<topic>` tag (every form and what it produces), and the
   chandas/alankara glossaries.
+- [`docs/extract.md`](docs/extract.md) — the `<extract/>` tag: showing
+  a passage (a heading's section, or only some gloss types) from another
+  section file of the same text instead of copying it.
 - [`docs/dict.md`](docs/dict.md) — the dictionary workflow: every `dict:`
   option, the `<dict>`/`<dictref>` tags, and both output formats
   (including the full-chapter record and `tags_keep`).
