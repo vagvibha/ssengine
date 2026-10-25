@@ -1215,12 +1215,12 @@ def discover_texts_in_group(section: SectionConfig, group: TextGroup) -> list[Te
     texts = []
     src_root = section.src / group.dir_name
     if not src_root.exists():
-        warn(f"{src_root} does not exist — no texts found for section '{section.dir}' group '{group.dir_name}'")
+        skip_note(f"{src_root} does not exist — no texts found for section '{section.dir}' group '{group.dir_name}'")
         return texts
     for d in sorted(p for p in src_root.iterdir() if p.is_dir() and not p.name.startswith(".")):
         meta_path = find_meta_file(d)
         if not meta_path:
-            warn(f"{d} has no meta.yaml/meta.yml — skipping this text")
+            skip_note(f"{d} has no meta.yaml/meta.yml — skipping this text")
             continue
         meta = read_meta(d)
         validate_book_meta(meta, meta_path)
@@ -1363,7 +1363,7 @@ def discover_chapters(text: Text) -> list[Chapter]:
             if title:
                 dict_titles.append((f, title))
         if not sections:
-            warn(f"chapter directory {d} contains no .md sections — skipping")
+            skip_note(f"chapter directory {d} contains no .md sections — skipping")
             continue
         if len(dict_titles) > 1:
             raise ConfigError(
