@@ -58,6 +58,7 @@ testing against MG's real content (not just the doc's worked example):
 """
 from __future__ import annotations
 
+import argparse
 import re
 import sys
 from dataclasses import dataclass
@@ -70,6 +71,12 @@ import dict_extract as de
 import dict_render as dr
 
 DICT_ROOT = gi.ROOT / "dict"
+
+# --strict: problems that are normally tolerated (a <dict> tag in a chapter
+# with no dict: config — usually WIP — or in a dict.type: shloka chapter)
+# are collected here and fail the run at the end. See main().
+STRICT = False
+STRICT_ERRORS: list[str] = []
 META_FILENAME = "meta.yaml"
 
 
@@ -340,8 +347,7 @@ def process_notes_chapter(text: gi.Text, chapter: gi.Chapter, config: DictConfig
 
         for cap in captures:
             if not cap.syns:
-                gi.warn(f"{section}: <dict> entry with no syns= — skipping (nothing to key it by)")
-                continue
+                raise de.DictSyntaxError(section, "<dict> entry with no syns= — nothing to key it by")
             entry_text = dr.render_notes_entry(cap.raw_content, text.effective_gloss_types, source_for_warning=section)
             records.append(notes_record(cap.syns, entry_text))
 
@@ -354,7 +360,7 @@ def process_notes_chapter(text: gi.Text, chapter: gi.Chapter, config: DictConfig
     header = base_header(text, config, "notes", config.skip)
     out_path = out_dir / f"{chapter.slug}.txt"
     if not records:
-        print(f"skipping {out_path} (no entries)")
+        gi.skip_note(f"skipping {out_path} (no entries)")
     else:
         content = "\n".join(header) + "\n" + "\n\n".join(records) + "\n"
         write_dict_file(out_path, content)
@@ -365,7 +371,7 @@ def process_notes_chapter(text: gi.Text, chapter: gi.Chapter, config: DictConfig
         full_body = "\n\n".join(full_chapter_parts).strip()
         full_path = out_dir / f"{chapter.slug}-full.txt"
         if not full_body:
-            print(f"skipping {full_path} (no entries)")
+            gi.skip_note(f"skipping {full_path} (no entries)")
         else:
             dropped: dict[str, int] = {}
             full_entry = dr.render_full_chapter_entry(full_body, text.effective_gloss_types, keep, dropped)
@@ -463,10 +469,12 @@ def process_shloka_chapter(text: gi.Text, chapter: gi.Chapter, config: DictConfi
         # this call still matters, purely for that.
         body, captures = de.extract_dict_and_ref_tags(body, source_for_warning=section)
         if captures:
-            gi.warn(
-                f"{section}: <dict> tag found in a dict.type: shloka chapter — shloka format doesn't use "
-                f"<dict> tags (synonyms/skip come from frontmatter or the shloka div's own attrs); ignored"
-            )
+            msg = (f"{section}: <dict> tag found in a dict.type: shloka chapter — shloka format doesn't use "
+                   f"<dict> tags (synonyms/skip come from frontmatter or the shloka div's own attrs)")
+            if STRICT:
+                STRICT_ERRORS.append(msg)
+            else:
+                gi.warn(msg + "; ignored")
 
         fm_dict = fm.get("dict") or {}
         file_syns = gi.as_list(fm_dict.get("syns"))
@@ -549,7 +557,7 @@ def process_shloka_chapter(text: gi.Text, chapter: gi.Chapter, config: DictConfi
         header.append(f"HEADER:auto_shloka=false")
     out_path = out_dir / f"{chapter.slug}.txt"
     if not records:
-        print(f"skipping {out_path} (no entries)")
+        gi.skip_note(f"skipping {out_path} (no entries)")
     else:
         content = "\n".join(header) + "\n" + "\n\n".join(records) + "\n"
         write_dict_file(out_path, content)
@@ -562,7 +570,7 @@ def process_shloka_chapter(text: gi.Text, chapter: gi.Chapter, config: DictConfi
         full_header = base_header(text, config, "notes", config.skip)
         full_path = out_dir / f"{chapter.slug}-full.txt"
         if not full_body:
-            print(f"skipping {full_path} (no entries)")
+            gi.skip_note(f"skipping {full_path} (no entries)")
         else:
             full_content = "\n".join(full_header) + "\n" + notes_record([config.chapter_key], full_body) + "\n"
             write_dict_file(full_path, full_content)
@@ -575,6 +583,19 @@ def process_shloka_chapter(text: gi.Text, chapter: gi.Chapter, config: DictConfi
 # ---------------------------------------------------------------------------
 # Chapter dispatch
 # ---------------------------------------------------------------------------
+
+def check_unconfigured_chapter(text: gi.Text, chapter: gi.Chapter, folder: str) -> None:
+    """--strict only: a chapter that isn't dict-enabled but has <dict> tags
+    in its sections — those entries are silently dropped in a normal run."""
+    missing = "chapter has no dict: block with a type:"
+    if not folder:
+        missing += ", and the book's meta.yaml has no dict.folder"
+    for section in chapter.sections:
+        _, body = gi.split_frontmatter(section.read_text(encoding="utf-8"))
+        n = len(de.DICT_OPEN_RE.findall(body))
+        if n:
+            STRICT_ERRORS.append(f"{section}: {n} <dict> tag(s) found, but {missing} — nothing is generated for them")
+
 
 def process_chapter(text: gi.Text, chapter: gi.Chapter, folder: str) -> bool:
     """Returns True if at least one file was written for this chapter."""
@@ -591,7 +612,21 @@ def process_chapter(text: gi.Text, chapter: gi.Chapter, folder: str) -> bool:
     return process_shloka_chapter(text, chapter, config)
 
 
-def main() -> int:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    p = argparse.ArgumentParser(description="Generate dict/ files from the source .md files (see docs/dict.md).")
+    p.add_argument("--strict", action="store_true",
+                   help="fail if any <dict> tag is in a chapter with no dict: config (or no book dict.folder), "
+                        "or in a dict.type: shloka chapter")
+    p.add_argument("--verbose", action="store_true",
+                   help="also print 'skipping ...' messages (ignore: true, chapters with no entries)")
+    return p.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
+    global STRICT
+    args = parse_args(argv)
+    STRICT = args.strict
+    gi.SHOW_SKIPS = args.verbose
     dictionaries = load_dictionaries(gi.SITE_CONFIG)
     any_enabled = False
     written: dict[str, list[str]] = {}   # folder -> text slugs with output, discovery order
@@ -612,6 +647,8 @@ def main() -> int:
                     config = DictConfig(text, chapter, folder)
                     if config.is_enabled:
                         any_enabled = True
+                    elif STRICT:
+                        check_unconfigured_chapter(text, chapter, folder)
                     if process_chapter(text, chapter, folder):
                         slugs = written.setdefault(folder, [])
                         if text.slug not in slugs:
@@ -622,6 +659,13 @@ def main() -> int:
 
     if not any_enabled:
         print("No dict-enabled chapters found (no chapter meta.yaml has a dict: block with a type:).")
+
+    if STRICT_ERRORS:
+        print(f"\n--strict: {len(STRICT_ERRORS)} problem(s):", file=sys.stderr)
+        for msg in STRICT_ERRORS:
+            print(f"  {msg}", file=sys.stderr)
+        print("Index files (dict/meta.yaml, dict/<folder>/meta.yaml) not updated.", file=sys.stderr)
+        return 1
 
     # Meta files only after everything above succeeded. Skipped entirely
     # when there's no output and no dict/ yet (e.g. a site with no

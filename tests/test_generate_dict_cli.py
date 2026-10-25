@@ -169,3 +169,98 @@ def test_malformed_dict_tag_fails_with_context(tmp_path):
     r = run_script(site, "generate_dict.py")
     assert r.returncode != 0
     assert "FAILED while processing" in r.stderr and "never closed" in r.stderr
+
+
+# ---------------------------------------------------------------------------
+# --strict / --verbose
+# ---------------------------------------------------------------------------
+
+WIP_CHAPTER = {  # <dict> tags, but no dict: block in the chapter meta
+    "files": {"01.md": 'गद्यम् <dict syns="इ">प्रविष्टिः</dict>\n'},
+}
+
+
+def _strict_site(tmp_path, chapters, book_dict=True):
+    meta = {"title": "कुमारसम्भवम्"}
+    if book_dict:
+        meta["dict"] = {"folder": "kavya"}
+    return make_site(tmp_path, {"kavya/padya/ks": {"meta": meta, "chapters": chapters}})
+
+
+def test_unconfigured_dict_tags_pass_without_strict(tmp_path):
+    site = _strict_site(tmp_path, {"01": NOTES_CHAPTER, "02": WIP_CHAPTER})
+    r = run_script(site, "generate_dict.py")
+    assert r.returncode == 0, r.stderr
+    assert "02" not in r.stderr
+
+
+def test_strict_fails_on_dict_tags_in_unconfigured_chapter(tmp_path):
+    site = _strict_site(tmp_path, {"01": NOTES_CHAPTER, "02": WIP_CHAPTER})
+    r = run_script(site, "generate_dict.py", "--strict")
+    assert r.returncode == 1
+    assert "02/01.md: 1 <dict> tag(s) found, but chapter has no dict: block" in r.stderr
+    assert "dict.folder" not in r.stderr.split("problem(s):")[1]
+    assert not (site / "dict" / "meta.yaml").exists()  # index files not updated
+
+
+def test_strict_mentions_missing_book_folder(tmp_path):
+    site = _strict_site(tmp_path, {"02": WIP_CHAPTER}, book_dict=False)
+    r = run_script(site, "generate_dict.py", "--strict")
+    assert r.returncode == 1
+    assert "and the book's meta.yaml has no dict.folder" in r.stderr
+
+
+def test_strict_skips_ignored_chapter(tmp_path):
+    ignored = {"meta": {"ignore": True}, "files": WIP_CHAPTER["files"]}
+    site = _strict_site(tmp_path, {"01": NOTES_CHAPTER, "02": ignored})
+    r = run_script(site, "generate_dict.py", "--strict")
+    assert r.returncode == 0, r.stderr
+
+
+def test_strict_passes_clean_site(tmp_path):
+    site = make_site(tmp_path, standard_texts())
+    r = run_script(site, "generate_dict.py", "--strict")
+    assert r.returncode == 0, r.stderr
+    assert (site / "dict" / "meta.yaml").exists()
+
+
+def test_dict_tag_in_shloka_chapter_warns_or_fails_with_strict(tmp_path):
+    ch = copy.deepcopy(SHLOKA_CHAPTER)
+    ch["files"]["01.md"] += 'टीका <dict syns="उ">प्रविष्टिः</dict>\n'
+    site = _strict_site(tmp_path, {"05": ch})
+    r = run_script(site, "generate_dict.py")
+    assert r.returncode == 0, r.stderr
+    assert "<dict> tag found in a dict.type: shloka chapter" in r.stderr
+    r = run_script(site, "generate_dict.py", "--strict")
+    assert r.returncode == 1
+    assert "--strict: 1 problem(s)" in r.stderr
+    assert "<dict> tag found in a dict.type: shloka chapter" in r.stderr
+
+
+def test_dict_entry_without_syns_fails(tmp_path):
+    ch = {"meta": {"dict": {"type": "notes"}}, "files": {"01.md": "गद्यम् <dict>प्रविष्टिः</dict>\n"}}
+    site = _strict_site(tmp_path, {"01": ch})
+    r = run_script(site, "generate_dict.py")
+    assert r.returncode != 0
+    assert "<dict> entry with no syns=" in r.stderr
+
+
+def test_skip_messages_only_with_verbose(tmp_path):
+    ignored = {"meta": {"ignore": True}, "files": {"01.md": "पाठः\n"}}
+    site = _strict_site(tmp_path, {"01": NOTES_CHAPTER, "02": EMPTY_NOTES_CHAPTER, "03": ignored})
+    r = run_script(site, "generate_dict.py")
+    assert r.returncode == 0, r.stderr
+    assert "kipping" not in r.stdout
+    assert "wrote" in r.stdout
+    r = run_script(site, "generate_dict.py", "--verbose")
+    assert r.returncode == 0, r.stderr
+    assert "skipping" in r.stdout and "(no entries)" in r.stdout
+    assert "Skipping" in r.stdout and "(ignore: true in meta.yaml)" in r.stdout
+
+
+def test_generate_indices_still_prints_skip_messages(tmp_path):
+    ignored = {"meta": {"ignore": True}, "files": {"01.md": "पाठः\n"}}
+    site = _strict_site(tmp_path, {"01": NOTES_CHAPTER, "03": ignored})
+    r = run_script(site, "generate_indices.py")
+    assert r.returncode == 0, r.stderr
+    assert "(ignore: true in meta.yaml)" in r.stdout

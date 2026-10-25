@@ -203,6 +203,18 @@ def warn(msg: str) -> None:
     print(f"WARNING: {msg}", file=sys.stderr)
 
 
+# Whether skip_note() prints. On by default, so this script's own output
+# is unchanged; generate_dict.py turns it off unless --verbose is given.
+SHOW_SKIPS = True
+
+
+def skip_note(msg: str) -> None:
+    """An informational "Skipping ..." line (e.g. `ignore: true`) — not a
+    warning, and silenced when SHOW_SKIPS is False."""
+    if SHOW_SKIPS:
+        print(msg)
+
+
 def load_yaml(path: Path) -> dict:
     if not path.exists():
         return {}
@@ -1213,7 +1225,7 @@ def discover_texts_in_group(section: SectionConfig, group: TextGroup) -> list[Te
         meta = read_meta(d)
         validate_book_meta(meta, meta_path)
         if meta.get("ignore"):
-            print(f"Skipping {d} (ignore: true in meta.yaml)")
+            skip_note(f"Skipping {d} (ignore: true in meta.yaml)")
             continue
         if "title" not in meta:
             warn(f"{meta_path} has no 'title' — skipping this text")
@@ -1335,7 +1347,7 @@ def discover_chapters(text: Text) -> list[Chapter]:
         chapter_meta = read_meta(d)  # optional meta.yaml/meta.yml inside the chapter dir (title, default_shloka_type, default_class, ...)
         validate_chapter_meta(chapter_meta, find_meta_file(d) or d)
         if chapter_meta.get("ignore"):
-            print(f"Skipping {d} (ignore: true in meta.yaml)")
+            skip_note(f"Skipping {d} (ignore: true in meta.yaml)")
             continue
         sections = []
         ignored_stems: set[str] = set()
@@ -1343,7 +1355,7 @@ def discover_chapters(text: Text) -> list[Chapter]:
         for f in sorted(d.glob("*.md"), key=lambda f: f.stem):
             fm, _ = split_frontmatter(f.read_text(encoding="utf-8"))
             if fm.get("ignore"):
-                print(f"Skipping {f} (ignore: true in frontmatter)")
+                skip_note(f"Skipping {f} (ignore: true in frontmatter)")
                 ignored_stems.add(f.stem)
                 continue
             sections.append(f)
@@ -1383,7 +1395,7 @@ def discover_chapters(text: Text) -> list[Chapter]:
             continue
         fm, _ = split_frontmatter(f.read_text(encoding="utf-8"))
         if fm.get("ignore"):
-            print(f"Skipping {f} (ignore: true in frontmatter)")
+            skip_note(f"Skipping {f} (ignore: true in frontmatter)")
             continue
         # No meta.yaml for a single-file chapter, so its frontmatter dict:
         # block stands in for the chapter meta.yaml's one (same keys).

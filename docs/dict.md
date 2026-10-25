@@ -13,8 +13,8 @@ dict/<folder>/<book>/<chapter>-full.txt  the whole chapter as one record (chapte
 Trailing spaces and tabs are removed from every line of every output
 file: Markdown's two-space line break only matters on the site, and the
 dictionary builder turns each newline into `<br>` itself. A file with no
-records is not written. Any input error fails the run (see
-[Errors](#errors)). Unknown keys in any `dict:` block fail both this
+records is not written (pass `--verbose` to see which). Any input error
+fails the run (see [Errors](#errors)). Unknown keys in any `dict:` block fail both this
 script and the site build (see [site_config.md](site_config.md#strict-validation)).
 
 ---
@@ -110,8 +110,8 @@ chapter writes no dict output, as before.
 <dict syns="अ" entry="short entry text"/>
 ```
 
-- `syns` is comma (or semicolon) separated. An entry with no `syns` is
-  skipped with a warning.
+- `syns` is comma (or semicolon) separated. An entry with no `syns`
+  fails the build.
 - The self-closing form never displays. `display=` on it must be absent
   or `"False"`.
 - Nesting, an unclosed tag or a stray `</dict>` fails the build.
@@ -211,7 +211,8 @@ The per-entry `<chapter>.txt` is unaffected by any of this.
 
 ## Shloka format (`type: shloka`)
 
-No `<dict>` tags; a stray one is warned about and ignored. Each
+No `<dict>` tags; a stray one is warned about and ignored (with
+`--strict`, it fails the run). Each
 `<div class="shloka">` becomes one record. Its glosses are everything
 from that div up to the next shloka div, or the end of the file.
 
@@ -323,11 +324,27 @@ name: Kavya
 folders: [ks, ka]                 # books with output this run, in site order
 ```
 
+## Command-line flags
+
+```
+python3 ssengine/scripts/generate_dict.py [--strict] [--verbose]
+```
+
+- `--strict` — also fail on `<dict>` tags that a normal run quietly
+  drops: tags in a chapter with no `dict:` block (or whose book has no
+  `dict.folder`), and tags in a `type: shloka` chapter. Without it, such
+  chapters are treated as work in progress. Every problem is listed,
+  then the run exits non-zero without updating the index files. Chapters
+  and files with `ignore: true` are never checked.
+- `--verbose` — also print the `skipping ...` lines (`ignore: true`
+  books/chapters/files, and chapters with no entries). Warnings and
+  `wrote ...` lines are always printed.
+
 ## Errors
 
 Fatal (non-zero exit; the generated index files aren't updated, though
 chapter files written earlier in the same run stay):
-- malformed `<dict>` / `<dictref>`
+- malformed `<dict>` / `<dictref>`, including a `<dict>` with no `syns`
 - a bad shloka marker or `shloka_key_prefix`
 - two shlokas with the same key in one chapter, or a bad `data-alt`
 - a bad `dictionaries:` registry or undeclared `dict.folder`
