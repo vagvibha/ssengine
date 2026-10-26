@@ -542,7 +542,8 @@ def process_shloka_chapter(text: gi.Text, chapter: gi.Chapter, config: DictConfi
     ] if config.chapter_key else []
     full_body = "\n\n".join(full_chapter_parts).strip()
     # the Up link only when the chapter's own full record is written below
-    up_key = config.chapter_key if (config.nav and full_body) else None
+    # MG: Update to remove "e:" (this is not really part of the key)
+    up_key = config.chapter_key.removeprefix("e:") if (config.nav and full_body and config.chapter_key) else None
 
     records: list[str] = []
     for i, e in enumerate(entries):
