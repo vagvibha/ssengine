@@ -159,7 +159,7 @@ def test_full_chapter_entry_end_to_end(tmp_path):
     assert "left out (not in tags_keep): vritti ×1" in r.stdout
 
     full = (site / "dict" / "plays" / "as" / "01-full.txt").read_text(encoding="utf-8")
-    header, record = full.split("- AS-01\n")
+    header, record = full.split("- e:AS-01\n")  # chapter_key gets the "e:" prefix
     assert record.splitlines() == [
         "<b>प्रथमोऽङ्कः</b>",
         '**राजा** – वचनम् <a href="bword://Y"> (Ref) </a>',

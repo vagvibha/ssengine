@@ -139,7 +139,9 @@ def test_every_bword_link_resolves_and_no_blank_line_in_records(tmp_path):
     assert r.returncode == 0, r.stderr
     txt, full = out(site, "01.txt"), out(site, "01-full.txt")
     keys = {ln[2:].split(";")[0].removeprefix("e:") for ln in txt.split("\n") if ln.startswith("+ ")}
-    keys |= {ln[2:] for ln in full.split("\n") if ln.startswith("- ")}
+    full_keys = {ln[2:] for ln in full.split("\n") if ln.startswith("- ")}
+    assert full_keys == {"e:MD-01"}  # chapter_key gets the "e:" prefix like shloka keys
+    keys |= {k.removeprefix("e:") for k in full_keys}
     hrefs = set(re.findall(r'bword://([^"]+)"', txt + full))
     assert hrefs and hrefs <= keys
     recs = records(txt)
