@@ -221,7 +221,12 @@ class DictConfig:
         self.section_title = chapter.section_dict_title  # from a section's frontmatter — see gi.discover_chapters
         self.skip = gi.as_list(block.get("skip"))
         self.auto_shloka = bool(block.get("auto_shloka", True))
+
         self.chapter_key = str(block.get("chapter_key", "")).strip()
+        # Prefix e: automatically
+        if not self.chapter_key.startswith("e:") and any(c.isalnum() for c in self.chapter_key):
+            self.chapter_key = f"e:{self.chapter_key}"
+
         self.shloka_key_prefix = str(block.get("shloka_key_prefix", "")).strip()
         # Verse prev/next/chapter links on every shloka record — see
         # process_shloka_chapter.
