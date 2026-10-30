@@ -1543,7 +1543,9 @@ class HeadingTarget:
     `rel_file` (see RefPage.rendered_bodies). `anchor` is the author's own
     `{#id}` when the heading has one (`own_id`), else a generated `tphN`
     that render time appends to the heading. `refs` collects the
-    citations, rendered as a list at the end of the heading's section."""
+    citations, rendered as a list at the end of the heading's section;
+    `defs` the heading-scoped definitions (`<topic heading= define=>`),
+    rendered as a परिभाषाः table just before that list."""
 
     def __init__(self, rel_file: str, line_idx: int, level: int, text: str, anchor: str, own_id: bool):
         self.rel_file = rel_file
@@ -1553,6 +1555,7 @@ class HeadingTarget:
         self.anchor = anchor
         self.own_id = own_id
         self.refs: list[Reference] = []
+        self.defs: list[TopicDefinition] = []
 
 
 class Reference:
@@ -2055,8 +2058,12 @@ def process_topic_tags(
     the entry's lead text; a paired body is never used as a label. The
     self-closing form isn't stripped entirely here: it leaves an empty
     `<span id="tpN"></span>` plus ↗ so the back-link lands on that spot.
-    heading= must match exactly one heading of a single named topic, and
-    can't be combined with define=.
+    heading= must match exactly one heading of a single named topic.
+    With define= the definition goes into a परिभाषाः table at the end of
+    that heading's section (before its reference list), never into the
+    page-level table; a reference is then added only if context= is
+    given too (the same rule as without heading=), and a self-closing
+    define-only tag leaves nothing on the page.
 
     `name=` may list several topics, comma-separated (`name="X, Y"`): the
     tag then counts for each of them exactly as if tagged for that one
@@ -2136,15 +2143,9 @@ def process_topic_tags(
         if "heading" in attrs:
             if not heading:
                 fail(f"{tag}: heading= is empty")
-            if "define" in attrs:
-                fail(f"{tag}: heading= can't be combined with define= — a heading-scoped citation is a "
-                     f"reference, not a definition")
-            if "entry" in attrs:
-                fail(f"{tag}: entry= needs define= (the term it defines), and define= can't be used with heading=")
             if len(names) > 1:
                 fail(f"{tag}: heading= needs a single topic in name= (the heading is on one topic's page)")
             target = topics[names[0]].find_heading(heading, f"{source_for_warning}: {tag}")
-            return names, raw_name, "", html.escape(context) if context else "", target
 
         def_html = ""
         if body_text is None:
@@ -2153,13 +2154,16 @@ def process_topic_tags(
                 fail(f"{tag}: define= needs entry= (the definition text) in the self-closing form")
             if entry and not term:
                 fail(f"{tag}: entry= needs define= (the term it defines)")
-            if not term and not context:
+            if not term and not context and target is None:
                 fail(f"{tag}: needs define= + entry= (a definition) and/or context= (a reference)")
             def_html = definition_html(entry) if term else ""
         elif term:
             def_html = definition_html(body_text)
             if not def_html:
                 fail(f"{tag}: define=\"{term}\" but the body (the definition) is empty")
+
+        if target is not None:
+            return names, raw_name, def_html, html.escape(context) if context else "", target
 
         label = html.escape(context) if context else ""
         if body_text is not None and not term and not context:
@@ -2198,15 +2202,21 @@ def process_topic_tags(
     for start, end, kind, attrs_str, self_closing in tokens:
         if kind == "open" and self_closing:
             names, _, def_html, label, target = resolve(attrs_str, None)
+            term = (parse_attrs(attrs_str).get("define") or "").strip()
             if target is not None:
-                # heading-scoped: an empty anchor + ↗ stays, so the back-link lands here
-                counter += 1
-                anchor = f"tp{counter}"
-                splices.append((start, end, f'<span id="{anchor}"></span>{jump_links(names, target)}'))
-                add_heading_reference(names, label, anchor, target)
+                if def_html:
+                    # non-inline, like any self-closing definition
+                    target.defs.append(TopicDefinition(term, def_html, page_rel_out_file, None, def_label()))
+                if not def_html or label:
+                    # heading-scoped reference: an empty anchor + ↗ stays, so the back-link lands here
+                    counter += 1
+                    anchor = f"tp{counter}"
+                    splices.append((start, end, f'<span id="{anchor}"></span>{jump_links(names, target)}'))
+                    add_heading_reference(names, label, anchor, target)
+                else:
+                    splices.append((start, end, ""))  # definition only: nothing on the page
                 continue
             splices.append((start, end, ""))  # never shows anything on the page
-            term = (parse_attrs(attrs_str).get("define") or "").strip()
             if def_html:
                 for n in names:
                     definitions.setdefault(n, []).append(
@@ -2232,12 +2242,18 @@ def process_topic_tags(
         anchor = f"tp{counter}"
         splices.append((o_start, o_end, f'<span id="{anchor}">'))
         splices.append((start, end, f'</span>{jump_links(names, target)}'))
+        term = (parse_attrs(o_attrs_str).get("define") or "").strip()
         if target is not None:
-            add_heading_reference(names, label, anchor, target)
-        elif label:
+            # a heading-scoped definition goes to that heading's own table;
+            # a reference is added too unless it's define= without context=
+            if not def_html or label:
+                add_heading_reference(names, label, anchor, target)
+            if def_html:
+                target.defs.append(TopicDefinition(term, def_html, page_rel_out_file, anchor, def_label()))
+            continue
+        if label:
             add_reference(names, label, anchor)
         if def_html:
-            term = (parse_attrs(o_attrs_str).get("define") or "").strip()
             for n in names:
                 definitions.setdefault(n, []).append(
                     TopicDefinition(term, def_html, page_rel_out_file, anchor, def_label())
@@ -3816,15 +3832,30 @@ def heading_reference_lines(target: "HeadingTarget", current_rel_file: str) -> l
     return lines
 
 
+def heading_section_lines(page: "RefPage", target: "HeadingTarget", rel_file: str) -> list[str]:
+    """What goes at the end of one cited heading's section: its परिभाषाः
+    table (if any heading-scoped definitions; bare, with no label above
+    it — the heading is its context), then its citation list (if any)."""
+    lines: list[str] = []
+    table_html = build_topic_definitions_table(rel_file, target.defs, page.frontmatter)
+    if table_html:
+        lines.append(table_html)
+    refs = heading_reference_lines(target, rel_file)
+    if refs:
+        lines += ([""] if lines else []) + refs
+    return lines
+
+
 def inject_heading_references(page: "RefPage", rel_file: str, body: str) -> str:
     """`body` (as rendered at `rel_file`) with, for every heading there
     that `<topic heading="...">` tags cite: an explicit `{#anchor}` on the
-    heading (unless it has its own id), and the list of citations at the
-    end of its section — just before the next heading of the same or a
-    higher level, else at the end of the body. Lists that land on the
+    heading (unless it has its own id), and at the end of its section —
+    just before the next heading of the same or a higher level, else at
+    the end of the body — its परिभाषाः table (heading-scoped definitions)
+    followed by its list of citations. Lists that land on the
     same spot (a heading and the one it's nested in) go innermost first,
     kept apart with `<!-- -->` so Markdown doesn't merge them."""
-    targets = [t for ts in page.heading_index.values() for t in ts if t.rel_file == rel_file and t.refs]
+    targets = [t for ts in page.heading_index.values() for t in ts if t.rel_file == rel_file and (t.refs or t.defs)]
     if not targets:
         return body
     lines = body.splitlines()
@@ -3836,7 +3867,7 @@ def inject_heading_references(page: "RefPage", rel_file: str, body: str) -> str:
         end = next((i for i, level in headings if i > t.line_idx and level <= t.level), len(lines))
         while end > t.line_idx + 1 and not lines[end - 1].strip():
             end -= 1  # right after the section's last text, not after its trailing blank lines
-        inserts.setdefault(end, []).append((t.line_idx, heading_reference_lines(t, rel_file)))
+        inserts.setdefault(end, []).append((t.line_idx, heading_section_lines(page, t, rel_file)))
     out: list[str] = []
     for i in range(len(lines) + 1):
         if i in inserts:

@@ -221,7 +221,7 @@ gloss. It isn't processed inside topic pages themselves.
 | `define` | optional | optional | Adds a परिभाषाः row for this term. |
 | `entry` | not allowed | with `define` | The definition text (the body is the definition in the paired form). |
 | `context` | optional | optional | Adds a सन्दर्भाः line with this text as the link. |
-| `heading` | optional | optional | Lists the citation under one heading of the topic page instead (below). |
+| `heading` | optional | optional | Lists the citation (and/or definition) under one heading of the topic page instead (below). |
 
 ### What goes on the topic page
 
@@ -328,6 +328,31 @@ title: प्रमाणवाक्यानि
 - **Sections-mode topics:** the list goes on the part page that holds the
   heading, and the ↗ links to that part page.
 
+#### Definitions under a heading: `heading=` + `define=`
+
+`define` works with `heading` too, in both forms. The definition then
+goes into a परिभाषाः table at the end of that heading's section, not into
+the page-level table, so a topic page can have one definitions table per
+heading:
+
+```html
+<topic name="प्रमाणवाक्यानि" heading="यन्मनसा न मनुते" define="ब्रह्म">…</topic>
+<topic name="प्रमाणवाक्यानि" heading="नेति नेति" define="नेति" entry="…"/>
+```
+
+- **Table:** the same as the page-level one (संज्ञा/परिभाषा/मूलम्,
+  same terms merged, ● for a self-closing definition), with no label
+  above it — the heading is its context. Column names come from the
+  topic's `*_column_heading` frontmatter (else `labels:`), so they're
+  the same for every table on one topic page.
+- **Order:** the table comes first, then the heading's reference list.
+- **References:** as without `heading`, `define` adds a reference only
+  together with `context`. A self-closing `define`+`entry` without
+  `context` leaves nothing on the text page; with `context` it leaves
+  the anchor and ↗ as above.
+- Definitions without `heading` still go to the page-level परिभाषाः
+  table (in sections mode, its separate page).
+
 ### Errors
 
 Anything the engine can't use as written stops the build, with the file
@@ -346,8 +371,7 @@ and the tag in the message:
 - a `<topic>` opened inside another, a `</topic>` with no opening tag,
   or a `<topic>` never closed;
 - with `heading`: no heading with that text on the topic page, or more
-  than one; `heading` together with `define` (or `entry`); several topics
-  in `name`; an empty `heading`.
+  than one; several topics in `name`; an empty `heading`.
 
 ### Sections mode
 

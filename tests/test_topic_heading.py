@@ -192,8 +192,9 @@ DUP_TOPIC = "---\ntitle: प्रमाणवाक्यानि\n---\n## अ
 @pytest.mark.parametrize("chapter, topic, message", [
     (f'<topic {NAME} heading="अज्ञातम्">अ</topic>\n', TOPIC, "has no heading with the text 'अज्ञातम्'"),
     (f'<topic {NAME} heading="अ"/>\n', DUP_TOPIC, "has 2 headings with the text 'अ'"),
-    (f'<topic {NAME} {H1} define="पदम्">अ</topic>\n', TOPIC, "heading= can't be combined with define="),
-    (f'<topic {NAME} {H1} define="पदम्" entry="ज"/>\n', TOPIC, "heading= can't be combined with define="),
+    (f'<topic {NAME} {H1} define="पदम्"/>\n', TOPIC, "define= needs entry="),
+    (f'<topic {NAME} {H1} define="पदम्"></topic>\n', TOPIC, "the body (the definition) is empty"),
+    (f'<topic {NAME} {H1} define="">अ</topic>\n', TOPIC, "define= is empty"),
     (f'<topic name="प्रमाणवाक्यानि, माया" {H1}>अ</topic>\n', TOPIC, "heading= needs a single topic"),
     (f'<topic {NAME} heading=" ">अ</topic>\n', TOPIC, "heading= is empty"),
     (f'<topic {NAME} {H1} context="">अ</topic>\n', TOPIC, "context= is empty"),
@@ -207,6 +208,87 @@ def test_heading_with_entry_but_no_define_is_rejected(tmp_path):
     # entry= alone is meaningless for a heading-scoped tag too
     site, r = build(tmp_path, {"01": f'<topic {NAME} {H1} entry="ज"/>\n'})
     assert r.returncode != 0 and "entry= needs define=" in r.stderr, r.stderr
+
+
+# ---------------------------------------------------------------------------
+# heading= + define=: a परिभाषाः table at the end of the heading's section
+# ---------------------------------------------------------------------------
+
+def test_define_paired_goes_to_heading_table(tmp_path):
+    site = ok(tmp_path, {"01": f'<topic {NAME} {H1} define="पदम्">लक्षणम्</topic>\n'})
+    ch = read(site, CH1)
+    assert ('<span id="tp1">लक्षणम्</span> <a class="sv-topic-jump" '
+            'href="../../../../topics/cat/pv/#tph1"') in ch
+    page = read(site, TOPIC_REL)
+    assert "## यन्मनसा न मनुते {#tph1}\n" in page
+    sec = section_of(page, "## यन्मनसा न मनुते")
+    assert sec.index("उप-पाठः") < sec.index("<table>")
+    assert "**परिभाषाः**" not in page  # bare table, no label above it
+    assert '<td rowspan="1" class="sv-topic-term">पदम्</td>' in sec
+    assert 'href="../../../kavya/padya/ka/01/#tp1">लक्षणम्</a>' in sec
+    # define= without context=: no reference line, and nothing at page level
+    assert "\n- " not in sec
+    assert "## परिभाषाः" not in page and "सन्दर्भाः" not in page
+
+
+def test_define_and_context_table_before_list(tmp_path):
+    site = ok(tmp_path, {"01": f'<topic {NAME} {H1} define="पदम्" context="के. १.५">लक्षणम्</topic>\n'})
+    sec = section_of(read(site, TOPIC_REL), "## यन्मनसा न मनुते")
+    assert sec.index("</table>") < sec.index("- के. १.५ — [क — अध्यायः 1](../../kavya/padya/ka/01.md#tp1)")
+
+
+def test_define_self_closing_is_non_inline_and_invisible(tmp_path):
+    site = ok(tmp_path, {"01": f'अ <topic {NAME} heading="नेति नेति" define="पदम्" entry="ज"/> ब\n'})
+    assert "अ  ब" in read(site, CH1) and "tp1" not in read(site, CH1)
+    page = read(site, TOPIC_REL)
+    sec = section_of(page, "## नेति नेति")
+    assert gi.NON_INLINE_TOPIC_MARK + "ज" in sec
+    assert 'href="../../../kavya/padya/ka/01/">' in sec
+
+
+def test_define_self_closing_with_context_keeps_anchor(tmp_path):
+    site = ok(tmp_path, {"01": f'<topic {NAME} heading="नेति नेति" define="पदम्" entry="ज" context="बृ."/>\n'})
+    assert '<span id="tp1"></span>' in read(site, CH1)
+    sec = section_of(read(site, TOPIC_REL), "## नेति नेति")
+    assert sec.index("</table>") < sec.index("- बृ. — [क — अध्यायः 1](../../kavya/padya/ka/01.md#tp1)")
+
+
+def test_separate_tables_per_heading_and_page_table(tmp_path):
+    chapter = (f'<topic {NAME} {H1} define="पदम्">क</topic>\n\n'
+               f'<topic {NAME} {H1} define="पदम्">ख</topic>\n\n'
+               f'<topic {NAME} heading="नेति नेति" define="वचनम्">ग</topic>\n\n'
+               f'<topic {NAME} define="सामान्यम्">घ</topic>\n')
+    page = read(ok(tmp_path, {"01": chapter}), TOPIC_REL)
+    first = section_of(page, "## यन्मनसा न मनुते")
+    second = section_of(page, "## नेति नेति")
+    assert '<td rowspan="2" class="sv-topic-term">पदम्</td>' in first and "वचनम्" not in first
+    assert "वचनम्" in second and "पदम्" not in second.split("## परिभाषाः")[0]
+    main = page[page.index("## परिभाषाः"):]
+    assert "सामान्यम्" in main and "पदम्" not in main and "वचनम्" not in main
+
+
+def test_define_columns_follow_topic_frontmatter(tmp_path):
+    topic = TOPIC.replace("title: प्रमाणवाक्यानि\n",
+                          "title: प्रमाणवाक्यानि\ndefinitions_heading: लक्षणानि\nterm_column_heading: पदम्\n")
+    page = read(ok(tmp_path, {"01": f'<topic {NAME} {H1} define="अ">ब</topic>\n'}, topic=topic), TOPIC_REL)
+    sec = section_of(page, "## यन्मनसा न मनुते")
+    assert "<th>पदम्</th>" in sec and "लक्षणानि" not in sec
+
+
+def test_define_nested_headings_innermost_first(tmp_path):
+    chapter = (f'<topic {NAME} {H1} context="बाह्यम्">अ</topic>\n\n'
+               f'<topic {NAME} heading="उपवाक्यम्" define="पदम्">ब</topic>\n')
+    sec = section_of(read(ok(tmp_path, {"01": chapter}), TOPIC_REL), "## यन्मनसा न मनुते")
+    assert sec.index("</table>") < sec.index("<!-- -->") < sec.index("- बाह्यम् — [")
+
+
+def test_define_sections_topic(tmp_path):
+    site = ok(tmp_path, {"01": '<topic name="बहु" heading="अन्त्यम्" define="पदम्">अ</topic>\n'},
+              extra_topics=multi_file("sections"))
+    part = read(site, "topics/cat/bahu/02.md")
+    assert "## अन्त्यम् {#tph2}\n" in part and "<table>" in part
+    assert 'href="../../../../kavya/padya/ka/01/#tp1">अ</a>' in part
+    assert not (site / "docs/topics/cat/bahu/_definitions.md").exists()
 
 
 # ---------------------------------------------------------------------------
