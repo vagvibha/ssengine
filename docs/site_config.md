@@ -250,9 +250,9 @@ error.
 ### Chapter `toc:`
 
 In a `sections`-mode chapter, `toc:` lays out the landing page as a
-nested list. Each entry is either a section file or a heading with
-entries of its own, at any depth; files can sit at any level, including
-the top:
+nested list. Each entry is either a section file or a heading, and
+either can have entries of its own (`children:`), at any depth; files
+can sit at any level, including the top:
 
 ```yaml
 chapter_display_style: sections
@@ -266,22 +266,27 @@ toc:
           - file: 02
       - file: 03
   - file: 04
+    children:           # listed under 04's link
+      - file: 05
 ```
 
 Headings are plain text (`<strong class="sv-toc-heading">`, not links);
-files link to their pages under their usual title. The build fails
-unless:
+files link to their pages under their usual title, with any children
+nested under the link. The build fails unless:
 
-- every entry is exactly one of `file:` or `title:` + `children:`;
-- every heading has at least one child;
+- every entry is exactly one of `file:` (optionally with `children:`)
+  or `title:` + `children:`;
+- every heading has at least one child, and a file's `children:`, if
+  given, is not empty;
 - every section file is listed exactly once, and every listed file
   exists;
-- the files appear in **filename order**. That is the chapter's reading
+- the files appear in **filename order** — a file counts as coming
+  before its own children. That is the chapter's reading
   order everywhere (← → arrows, `full_chapter` mode, the dictionary), so
   to move a file, rename it.
 
-A listed file with `ignore: true` is skipped, and so is a heading left
-empty because of that. In `full_chapter` mode `toc:` is ignored (only
+A listed file with `ignore: true` is skipped (its children, if any,
+move up to its place), and so is a heading left empty because of that. In `full_chapter` mode `toc:` is ignored (only
 its shape is checked), so a chapter can switch between the two modes
 freely.
 

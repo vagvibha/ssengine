@@ -67,7 +67,37 @@ def test_ignored_file_and_its_emptied_heading_are_skipped(tmp_path):
     assert "T11" not in landing and "T1</strong>" in landing
 
 
+FILE_CHILDREN_TOC = [
+    {"file": "a", "children": [
+        {"file": "b", "children": [{"title": "H", "children": [{"file": "c"}]}]},
+    ]},
+]
+
+
+def test_file_with_children(tmp_path):
+    site, r = build(tmp_path, FILE_CHILDREN_TOC)
+    assert r.returncode == 0, r.stderr
+    landing = (site / LANDING).read_text(encoding="utf-8")
+    expected = "\n".join([
+        "- [अ-भागः](a.md)",
+        "    - [b](b.md)",
+        '        - <strong class="sv-toc-heading">H</strong>',
+        "            - [c](c.md)",
+    ])
+    assert expected in landing
+
+
+def test_ignored_file_children_move_up(tmp_path):
+    files = dict(FILES, **{"a.md": "---\nignore: true\n---\nअ\n"})
+    site, r = build(tmp_path, FILE_CHILDREN_TOC, files=files)
+    assert r.returncode == 0, r.stderr
+    landing = (site / LANDING).read_text(encoding="utf-8")
+    assert "- [b](b.md)\n    - <strong" in landing and "अ-भागः" not in landing
+
+
 @pytest.mark.parametrize("toc, message", [
+    ([{"file": "a", "children": []}, {"file": "b"}, {"file": "c"}], "file 'a' has an empty children:"),
+    ([{"file": "b", "children": [{"file": "a"}]}, {"file": "c"}], "different order than their filenames"),
     ([], "toc: is empty"),
     ([{"title": "T", "children": []}], "heading 'T' has no children"),
     ([{"title": "T"}], "heading 'T' has no children"),
