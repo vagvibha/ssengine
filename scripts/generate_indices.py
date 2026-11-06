@@ -157,6 +157,7 @@ stays at the repo root:
 
 from __future__ import annotations
 
+import argparse
 import html
 import posixpath
 import re
@@ -213,6 +214,17 @@ def skip_note(msg: str) -> None:
     warning, and silenced when SHOW_SKIPS is False."""
     if SHOW_SKIPS:
         print(msg)
+
+
+# Set by --disregard-ignore (command line only, for previewing work in
+# progress locally): when True, `ignore: true` is treated as if absent.
+DISREGARD_IGNORE = False
+
+
+def is_ignored(meta: dict) -> bool:
+    """Whether a meta.yaml / frontmatter dict says `ignore: true` — and
+    that's being honored (always, unless --disregard-ignore was given)."""
+    return bool(meta.get("ignore")) and not DISREGARD_IGNORE
 
 
 def load_yaml(path: Path) -> dict:
@@ -1232,7 +1244,7 @@ def discover_texts_in_group(section: SectionConfig, group: TextGroup) -> list[Te
             continue
         meta = read_meta(d)
         validate_book_meta(meta, meta_path)
-        if meta.get("ignore"):
+        if is_ignored(meta):
             skip_note(f"Skipping {d} (ignore: true in meta.yaml)")
             continue
         if "title" not in meta:
@@ -1358,7 +1370,7 @@ def discover_chapters(text: Text) -> list[Chapter]:
     for name, d in dir_children.items():
         chapter_meta = read_meta(d)  # optional meta.yaml/meta.yml inside the chapter dir (title, default_shloka_type, default_class, ...)
         validate_chapter_meta(chapter_meta, find_meta_file(d) or d)
-        if chapter_meta.get("ignore"):
+        if is_ignored(chapter_meta):
             skip_note(f"Skipping {d} (ignore: true in meta.yaml)")
             continue
         sections = []
@@ -1366,7 +1378,7 @@ def discover_chapters(text: Text) -> list[Chapter]:
         dict_titles: list[tuple[Path, str]] = []  # (section, its frontmatter dict.title)
         for f in sorted(d.glob("*.md"), key=lambda f: f.stem):
             fm, _ = split_frontmatter(f.read_text(encoding="utf-8"))
-            if fm.get("ignore"):
+            if is_ignored(fm):
                 skip_note(f"Skipping {f} (ignore: true in frontmatter)")
                 ignored_stems.add(f.stem)
                 continue
@@ -1406,7 +1418,7 @@ def discover_chapters(text: Text) -> list[Chapter]:
             )
             continue
         fm, _ = split_frontmatter(f.read_text(encoding="utf-8"))
-        if fm.get("ignore"):
+        if is_ignored(fm):
             skip_note(f"Skipping {f} (ignore: true in frontmatter)")
             continue
         # No meta.yaml for a single-file chapter, so its frontmatter dict:
@@ -4401,7 +4413,20 @@ def build_nav(
 # Main build
 # ---------------------------------------------------------------------------
 
-def main():
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    p = argparse.ArgumentParser(description="Generate the MkDocs docs/ tree from the source .md files.")
+    p.add_argument("--disregard-ignore", action="store_true",
+                   help="build texts, chapters and sections marked `ignore: true` anyway "
+                        "(for previewing work in progress locally; never use for a deploy)")
+    return p.parse_args(argv)
+
+
+def main(argv: list[str] | None = None):
+    global DISREGARD_IGNORE
+    args = parse_args(argv)
+    if args.disregard_ignore:
+        DISREGARD_IGNORE = True
+        print("--disregard-ignore: building everything marked `ignore: true` too")
     if not SECTIONS:
         print("No content_sections configured in site_config.yaml — nothing to build.", file=sys.stderr)
         sys.exit(1)

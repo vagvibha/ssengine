@@ -143,6 +143,11 @@ python ssengine/scripts/generate_dict.py      # dict/
 mkdocs build --strict
 ```
 
+To preview work in progress locally, `generate_indices.py --disregard-ignore`
+builds everything marked `ignore: true` (texts, chapters, sections) as if
+the flag weren't there. It's command-line only — the default always honors
+`ignore` — so don't use it for a deploy.
+
 The generated `mkdocs.yml` loads its hooks and macros from
 `ssengine/scripts/`, so the engine must be mounted there. The scripts
 fail (before writing anything) if they're run from anywhere but the repo

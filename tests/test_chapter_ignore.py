@@ -75,3 +75,16 @@ def test_dictionary_skips_ignored_chapters(tmp_path):
     out = site / "dict" / "kavya" / "ka"
     assert (out / "01.txt").exists()
     assert not (out / "02.txt").exists()
+
+
+def test_disregard_ignore_builds_ignored_chapter_and_section(tmp_path):
+    site = build(tmp_path, {
+        "01": {"files": {"01.md": "पाठः\n", "02.md": "---\nignore: true\n---\nगुप्त-खण्डः\n"}},
+        "02": {"meta": {"ignore": True}, "files": {"01.md": "गुप्तः-पाठः\n"}},
+    })
+    r = run_script(site, "generate_indices.py", "--disregard-ignore")
+    assert r.returncode == 0, r.stderr
+    assert "Skipping" not in r.stdout
+    docs = site / "docs" / "kavya" / "padya" / "ka"
+    assert "गुप्त-खण्डः" in (docs / "01.md").read_text(encoding="utf-8")
+    assert (docs / "02.md").exists()
