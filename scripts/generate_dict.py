@@ -333,8 +333,12 @@ def resolve_tags_keep(text: gi.Text, chapter: gi.Chapter, config: "DictConfig") 
     return set(config.tags_keep)
 
 
-def notes_record(syns: list[str], entry_text: str) -> str:
-    return f"- {';'.join(syns)}\n{entry_text}"
+def notes_record(syns: list[str], entry_text: str, hindi: str = "") -> str:
+    """One notes record. `hindi` (a <dict hindi="...">) becomes a final
+    `{{...}}` line: the dictionary builder leaves it out of the entry,
+    cds-study and the flashcard reports read it."""
+    record = f"- {';'.join(syns)}\n{entry_text}"
+    return f"{record.rstrip()}\n{{{{{hindi}}}}}" if hindi else record
 
 
 def process_notes_chapter(text: gi.Text, chapter: gi.Chapter, config: DictConfig) -> bool:
@@ -354,7 +358,7 @@ def process_notes_chapter(text: gi.Text, chapter: gi.Chapter, config: DictConfig
             if not cap.syns:
                 raise de.DictSyntaxError(section, "<dict> entry with no syns= — nothing to key it by")
             entry_text = dr.render_notes_entry(cap.raw_content, text.effective_gloss_types, source_for_warning=section)
-            records.append(notes_record(cap.syns, entry_text))
+            records.append(notes_record(cap.syns, entry_text, cap.hindi))
 
         if config.chapter_key:
             full_chapter_parts.append(dict_body.strip())
@@ -441,6 +445,7 @@ class _ShlokaEntry:
     blocks: list[str]
     key: str | None
     label: str | None  # the verse's own ॥…॥ marker (+ data-alt suffix), for nav links
+    hindi: str = ""    # the shloka's "hindi" gloss(es), for the {{...}} line
 
 
 def process_shloka_chapter(text: gi.Text, chapter: gi.Chapter, config: DictConfig) -> bool:
@@ -524,7 +529,9 @@ def process_shloka_chapter(text: gi.Text, chapter: gi.Chapter, config: DictConfi
             group_start = node.end
             group_end = shloka_nodes[i + 1].start if i + 1 < len(shloka_nodes) else len(body)
             group_text = body[group_start:group_end]
-            anvaya, blocks = dr.render_shloka_group(group_text, text.effective_gloss_types, source_for_warning=section)
+            hindi: list[str] = []
+            anvaya, blocks = dr.render_shloka_group(group_text, text.effective_gloss_types,
+                                                    source_for_warning=section, hindi_out=hindi)
 
             # the key doubles as a headword so a bword:// link elsewhere (e.g. the
             # full-chapter view below) can resolve straight to this record
@@ -534,7 +541,8 @@ def process_shloka_chapter(text: gi.Text, chapter: gi.Chapter, config: DictConfi
             if key:
                 alt = (attrs.get(ALT_ATTR) or "").strip()
                 label = dr.last_marker(shloka_text, section).group(0) + alt
-            entries.append(_ShlokaEntry(shloka_text, skip, record_syns, anvaya, blocks, key, label))
+            entries.append(_ShlokaEntry(shloka_text, skip, record_syns, anvaya, blocks, key, label,
+                                        " / ".join(hindi)))
 
     # for chapter_key: back-to-back shloka text (linked if shloka_key_prefix set)
     full_chapter_parts = [
@@ -552,7 +560,7 @@ def process_shloka_chapter(text: gi.Text, chapter: gi.Chapter, config: DictConfi
             prev = (entries[i - 1].key, entries[i - 1].label) if i > 0 else None
             next_ = (entries[i + 1].key, entries[i + 1].label) if i + 1 < len(entries) else None
             nav = dr.shloka_nav_line(prev, up_key, next_)
-        records.append(dr.shloka_record(e.shloka_text, e.skip, e.syns, e.anvaya, e.blocks, nav))
+        records.append(dr.shloka_record(e.shloka_text, e.skip, e.syns, e.anvaya, e.blocks, nav, e.hindi))
 
     out_dir = out_dir_for(config, text)
     out_dir.mkdir(parents=True, exist_ok=True)

@@ -25,6 +25,12 @@ Tags handled
     nestable — a second <dict> opened before the first is closed is a
     hard error.
 
+<dict syns="a" hindi="..."> / <dict syns="a" entry="..." hindi="..."/>
+    Either form may carry hindi=, a Hindi rendering of the usage. It is
+    never shown on the site; in the notes record it becomes a final
+    `{{...}}` line, which the dictionary builder leaves out of the entry
+    and other tools (cds-study, the flashcard reports) read as the Hindi.
+
 <dict syns="a" entry="..."/>
     Self-closing shortcut for a trivial entry: there is no content to
     show on the site either way, `entry=` is the dict entry text
@@ -129,6 +135,18 @@ class DictCapture:
     display: bool       # False => this content was NOT shown on the site
     self_closing: bool
     start: int           # offset in the ORIGINAL body, for warnings/debugging
+    hindi: str = ""      # hindi= attribute (never on the site), "" if absent
+
+
+def hindi_attr(attrs: dict, source_for_warning) -> str:
+    """The hindi= value, whitespace collapsed. It ends up as a `{{...}}`
+    line in the record, so braces in it are an error."""
+    value = " ".join(attrs.get("hindi", "").split())
+    if "hindi" in attrs and not value:
+        raise DictSyntaxError(source_for_warning, '<dict> with an empty hindi="" — remove it or fill it in')
+    if "{" in value or "}" in value:
+        raise DictSyntaxError(source_for_warning, f'<dict> hindi= can\'t contain {{ or }}: {value!r}')
+    return value
 
 
 def _dictref_replacement(attrs_str: str, source_for_warning) -> tuple[str, str]:
@@ -238,6 +256,7 @@ def extract_dict_views(
             captures.append(DictCapture(
                 as_syn_list(attrs.get("syns", "")), attrs.get("entry", ""),
                 display=False, self_closing=True, start=start,
+                hindi=hindi_attr(attrs, source_for_warning),
             ))
             site_splices.append((start, end, REMOVED_MARK))
             continue
@@ -262,6 +281,7 @@ def extract_dict_views(
         captures.append(DictCapture(
             as_syn_list(attrs.get("syns", "")), raw_inner,
             display=display, self_closing=False, start=o_start,
+            hindi=hindi_attr(attrs, source_for_warning),
         ))
         if display:
             site_splices.append((o_start, o_end, ""))

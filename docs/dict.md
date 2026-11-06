@@ -112,6 +112,13 @@ chapter writes no dict output, as before.
 
 - `syns` is comma (or semicolon) separated. An entry with no `syns`
   fails the build.
+- `hindi="…"` (optional, either form): a Hindi rendering of the usage.
+  Never shown on the site; written as the record's last line, `{{…}}`
+  (see [Notes format](#notes-format-type-notes)). The dictionary builder
+  leaves that line out of the entry; cds-study shows it as हिन्दी and the
+  flashcard candidate report lists it. Whitespace is collapsed; an empty
+  value or one containing `{` / `}` fails the build. It does end up in
+  the committed `dict/` files, so it is public wherever `dict/` is.
 - The self-closing form never displays. `display=` on it must be absent
   or `"False"`.
 - Nesting, an unclosed tag or a stray `</dict>` fails the build.
@@ -155,6 +162,7 @@ HEADER:type=notes
 HEADER:skip=w1;w2            (only when skip is non-empty)
 - syn1;syn2
 <entry text>
+{{hindi}}                    (only with hindi="…")
 
 - syn3
 <entry text>
@@ -227,6 +235,7 @@ HEADER:auto_shloka=false     (only when auto_shloka: false)
 - <skip words>               (omitted when empty)
 + <key>;<syns>               (key first when shloka_key_prefix is set)
 ++ <अन्वयः text, final । dropped>   (omitted when there is no anvaya gloss)
+{{<hindi gloss text>}}       (omitted when there is no hindi gloss)
 <b>label</b>
 <i>gloss</i>
 <br>
@@ -240,6 +249,12 @@ HEADER:auto_shloka=false     (only when auto_shloka: false)
   in a [single-file chapter](#single-file-chapters)).
 - A shloka with neither syns nor a generated key is skipped with a
   warning.
+- **Hindi:** a gloss of `data-type="hindi"` after the shloka is not a
+  gloss block: its text (tags stripped, whitespace collapsed) becomes the
+  `{{…}}` line, which the dictionary builder leaves out of the entry.
+  Several are joined with ` / `. Whether it shows on the site is up to
+  the gloss type (`exclude_site: true` to hide it); it is always in
+  `dict/`. `{` or `}` in it fails the build.
 
 ### Shloka keys
 

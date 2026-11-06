@@ -373,6 +373,7 @@ def render_shloka_gloss_text(inner: str) -> str:
 
 def render_shloka_group(
     group_text: str, gloss_types: dict, source_for_warning: object = "",
+    hindi_out: list[str] | None = None,
 ) -> tuple[str | None, list[str]]:
     """`group_text` is everything between one shloka div and the next
     shloka div (or end of section) — i.e. exactly the glosses attached
@@ -393,7 +394,12 @@ def render_shloka_group(
                      "\\n<br>" between them (a separator, per the
                      spec's worked example: no trailing <br> after the
                      last one; the next label follows on the <br>'s
-                     own line, not a new one)."""
+                     own line, not a new one).
+
+    With `hindi_out` (a list), a gloss of data-type "hindi" is not a
+    block: its text (tags stripped, whitespace collapsed) is appended to
+    hindi_out instead, for the record's `{{...}}` line (see
+    shloka_record)."""
     text = render_action_spans(group_text, source_for_warning)
     tree = gi.parse_divs(text)
     recognized = gi.recognized_div_classes(gloss_types)
@@ -405,6 +411,14 @@ def render_shloka_group(
             continue  # e.g. a stray "shloka" div here would be a grouping bug — leave alone, don't guess
         attrs = node.attrs_str
         type_key = gi.parse_attrs(attrs).get("data-type", "").strip()
+        if type_key == "hindi" and hindi_out is not None:
+            inner = re.sub(r"<[^>]+>", " ", text[node.tag_end:node.inner_end])
+            inner = " ".join(inner.split())
+            if "{" in inner or "}" in inner:
+                raise de.DictSyntaxError(source_for_warning, f"a hindi gloss can't contain {{ or }}: {inner!r}")
+            if inner:
+                hindi_out.append(inner)
+            continue
         label = gi.commentary_label(type_key, attrs, gloss_types)
         # a hand-written <details> (e.g. a mermaid diagram) is dropped
         # with its content, as in the full-chapter record
@@ -425,14 +439,16 @@ def render_shloka_group(
 
 def shloka_record(
     shloka_text: str, skip: list[str], syns: list[str], anvaya: str | None, gloss_blocks: list[str],
-    nav: str | None = None,
+    nav: str | None = None, hindi: str = "",
 ) -> str:
     """Assembles one shloka-format record: the shloka text (as given —
     caller passes it already stripped of its <div> wrapper, e.g. via
     render_structural_divs), the "====" delimiter, then the top part
     ("-"/"+"/"++" lines, each omitted entirely when empty) and the
     bottom part (glosses, "\\n<br>"-joined). `nav` (dict.nav: true — see
-    shloka_nav_line) is appended as one more, final gloss block."""
+    shloka_nav_line) is appended as one more, final gloss block.
+    `hindi` (the shloka's "hindi" gloss) is a `{{...}}` line after the
+    "++" line: the dictionary builder leaves it out of the entry."""
     if nav:
         gloss_blocks = [*gloss_blocks, nav]
     lines = [shloka_text.strip(), "===="]
@@ -442,6 +458,8 @@ def shloka_record(
         lines.append(f"+ {';'.join(syns)}")
     if anvaya:
         lines.append(f"++ {anvaya}")
+    if hindi:
+        lines.append(f"{{{{{hindi}}}}}")
     lines.append("\n<br>".join(gloss_blocks))
     return "\n".join(lines)
 
