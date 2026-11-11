@@ -373,7 +373,7 @@ def render_shloka_gloss_text(inner: str) -> str:
 
 def render_shloka_group(
     group_text: str, gloss_types: dict, source_for_warning: object = "",
-    hindi_out: list[str] | None = None,
+    hindi_out: list[str] | None = None, keep: set[str] | None = None,
 ) -> tuple[str | None, list[str]]:
     """`group_text` is everything between one shloka div and the next
     shloka div (or end of section) — i.e. exactly the glosses attached
@@ -399,7 +399,12 @@ def render_shloka_group(
     With `hindi_out` (a list), a gloss of data-type "hindi" is not a
     block: its text (tags stripped, whitespace collapsed) is appended to
     hindi_out instead, for the record's `{{...}}` line (see
-    shloka_record)."""
+    shloka_record).
+
+    With `keep` (dict.tags_keep on a shloka chapter), only glosses whose
+    data-type is in it become blocks; the others are left out with their
+    content. The अन्वयः gloss still supplies `anvaya` (the "++" keys)
+    even when it isn't kept, and a hindi gloss still goes to hindi_out."""
     text = render_action_spans(group_text, source_for_warning)
     tree = gi.parse_divs(text)
     recognized = gi.recognized_div_classes(gloss_types)
@@ -419,6 +424,11 @@ def render_shloka_group(
             if inner:
                 hindi_out.append(inner)
             continue
+        if type_key == "anvaya" and anvaya is None:
+            anvaya = re.sub(r"\s+", " ", _DETAILS_BLOCK_RE.sub("", text[node.tag_end:node.inner_end])).strip()
+            anvaya = re.sub(r"\s*।\s*$", "", anvaya)  # drop a trailing single danda — not meaningful on the "++" line
+        if keep is not None and type_key.lower() not in keep:
+            continue  # not in dict.tags_keep: no block (its "++" keys are already taken above)
         label = gi.commentary_label(type_key, attrs, gloss_types)
         # a hand-written <details> (e.g. a mermaid diagram) is dropped
         # with its content, as in the full-chapter record
@@ -430,9 +440,6 @@ def render_shloka_group(
         # in a notes entry — never raw <div> markup in the record
         content = render_shloka_gloss_text(render_structural_divs(raw_inner, gloss_types))
         blocks.append(f"<b>{label}</b>\n<i>{content}</i>" if label else f"<i>{content}</i>")
-        if type_key == "anvaya" and anvaya is None:
-            anvaya = re.sub(r"\s+", " ", raw_inner).strip()
-            anvaya = re.sub(r"\s*।\s*$", "", anvaya)  # drop a trailing single danda — not meaningful on the "++" line
 
     return anvaya, blocks
 

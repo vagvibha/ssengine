@@ -242,7 +242,7 @@ def load_yaml(path: Path) -> dict:
 # the engine actually uses. An unknown key is a hard error, never a
 # silent no-op: it's almost always a typo (`sources:` for `source:`,
 # `chapter_keys:` for `chapter_key:`) or a key set at the wrong level
-# (`dict.skip` in a book's meta.yaml, which only a chapter reads), and
+# (`dict.nav` in a book's meta.yaml, which only a chapter reads), and
 # either way the behavior the author expected isn't happening.
 #
 # These sets are the single source of truth — docs/site_config.md and
@@ -305,7 +305,9 @@ BOOK_META_KEYS = {
     "maintain_shloka_linebreak": "bool", "shloka_toc": "bool", "shloka_highlight": "bool", "dict": "map",
     "skip_text_index": "bool", "display_source": "bool",
 }
-BOOK_DICT_KEYS = {"folder": "str"}
+# `skip` here is added (book list first) to every dict-enabled chapter's
+# own `dict.skip` — see generate_dict.DictConfig.
+BOOK_DICT_KEYS = {"folder": "str", "skip": "list"}
 CHAPTER_META_KEYS = {
     "title": "str", "chapter_display_style": "str", "toc": "maplist", "ignore": "bool",
     "default_shloka_type": "str", "default_class": "str", "shloka_toc": "bool",

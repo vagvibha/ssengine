@@ -191,8 +191,8 @@ def test_tags_keep_accepts_a_class_used_elsewhere_in_the_book(tmp_path):
     ({"type": "notes", "chapter_key": "K", "tags_keep": ["notez"]}, "'notez' isn't a gloss type or a div class"),
     ({"type": "notes", "chapter_key": "K", "tags_keep": ["details"]}, "details can't be kept"),
     ({"type": "notes", "tags_keep": ["notes"]}, "tags_keep is set but chapter_key isn't"),
-    ({"type": "shloka", "chapter_key": "K", "shloka_key_prefix": "AS,99", "tags_keep": ["notes"]},
-     "tags_keep only applies to type: notes"),
+    ({"type": "shloka", "chapter_key": "K", "shloka_key_prefix": "AS,99", "tags_keep": ["notez"]},
+     "'notez' isn't a gloss type of this book"),
     ({"chapter_key": "K"}, "has no type:"),
     ({"type": "note"}, "dict.type 'note'"),
 ])

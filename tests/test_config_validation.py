@@ -52,7 +52,7 @@ def _run_both(site):
 
 @pytest.mark.parametrize("mutate, message", [
     (lambda t: t["kavya/padya/ka"]["meta"].update(sources="x"), "unknown key(s) 'sources'"),
-    (lambda t: t["kavya/padya/ka"]["meta"]["dict"].update(skip=["न"]), "dict: unknown key(s) 'skip'"),
+    (lambda t: t["kavya/padya/ka"]["meta"]["dict"].update(nav=True), "dict: unknown key(s) 'nav'"),
     (lambda t: t["kavya/padya/ka"]["chapters"]["01"]["meta"]["dict"].update(chapter_keys="K"),
      "unknown key(s) 'chapter_keys'"),
     (lambda t: t["kavya/padya/ka"]["chapters"]["01"]["meta"]["dict"].update(title=["१"]),

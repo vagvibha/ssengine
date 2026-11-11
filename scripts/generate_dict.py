@@ -219,7 +219,11 @@ class DictConfig:
         self.type = str(block.get("type", "")).strip().lower()
         self.title = str(block.get("title", "")).strip()
         self.section_title = chapter.section_dict_title  # from a section's frontmatter — see gi.discover_chapters
-        self.skip = gi.as_list(block.get("skip"))
+        # The book's dict.skip (if any) first, then the chapter's own; a
+        # word in both is kept once.
+        book_dict = text.meta.get("dict") or {}
+        book_skip = gi.as_list(book_dict.get("skip")) if isinstance(book_dict, dict) else []
+        self.skip = list(dict.fromkeys(book_skip + gi.as_list(block.get("skip"))))
         self.auto_shloka = bool(block.get("auto_shloka", True))
 
         self.chapter_key = str(block.get("chapter_key", "")).strip()
@@ -232,8 +236,10 @@ class DictConfig:
         # process_shloka_chapter.
         self.nav = block.get("nav") is True
         # None = not set (use the default: every gloss type + shloka);
-        # a list (possibly empty) = exactly these names. See
-        # dict_render.render_full_chapter_entry.
+        # a list (possibly empty) = exactly these names. Notes chapters:
+        # what the full-chapter record keeps (dict_render.render_full_chapter_entry).
+        # Shloka chapters: which gloss types become blocks in each verse
+        # record (see resolve_shloka_tags_keep).
         self.tags_keep: list[str] | None = (
             [t.lower() for t in gi.as_list(block.get("tags_keep"))] if "tags_keep" in block else None
         )
@@ -249,9 +255,7 @@ class DictConfig:
             if not self.shloka_key_prefix:
                 raise DictConfigError(f"{where}.nav needs shloka_key_prefix — without verse keys there is "
                                       f"nothing to link to")
-        if self.tags_keep is not None:
-            if self.type != "notes":
-                raise DictConfigError(f"{where}.tags_keep only applies to type: notes chapters")
+        if self.tags_keep is not None and self.type == "notes":
             if not self.chapter_key:
                 raise DictConfigError(f"{where}.tags_keep is set but chapter_key isn't — tags_keep only "
                                       f"affects the chapter_key full-chapter entry")
@@ -329,6 +333,22 @@ def resolve_tags_keep(text: gi.Text, chapter: gi.Chapter, config: "DictConfig") 
         raise DictConfigError(
             f"{text.dir}/{chapter.slug}/meta.yaml: dict.tags_keep: {', '.join(repr(t) for t in unknown)} "
             f"isn't a gloss type or a div class used in this book (known: {', '.join(sorted(known))})"
+        )
+    return set(config.tags_keep)
+
+
+def resolve_shloka_tags_keep(text: gi.Text, chapter: gi.Chapter, config: "DictConfig") -> set[str] | None:
+    """For a shloka chapter: the gloss types that become blocks in each
+    verse record — None (every gloss) when dict.tags_keep isn't set.
+    Every name must be one of this book's gloss types."""
+    if config.tags_keep is None:
+        return None
+    known = set(text.effective_gloss_types)
+    unknown = [t for t in config.tags_keep if t not in known]
+    if unknown:
+        raise DictConfigError(
+            f"{text.dir}/{chapter.slug}/meta.yaml: dict.tags_keep: {', '.join(repr(t) for t in unknown)} "
+            f"isn't a gloss type of this book (known: {', '.join(sorted(known))})"
         )
     return set(config.tags_keep)
 
@@ -448,7 +468,8 @@ class _ShlokaEntry:
     hindi: str = ""    # the shloka's "hindi" gloss(es), for the {{...}} line
 
 
-def process_shloka_chapter(text: gi.Text, chapter: gi.Chapter, config: DictConfig) -> bool:
+def process_shloka_chapter(text: gi.Text, chapter: gi.Chapter, config: DictConfig,
+                           chapter_nav: tuple[str | None, str | None] = (None, None)) -> bool:
     """Returns True if at least one file was written.
 
     Every shloka's key must be unique within the chapter (a repeated
@@ -458,9 +479,15 @@ def process_shloka_chapter(text: gi.Text, chapter: gi.Chapter, config: DictConfi
     With dict.nav, each record ends with a navigation line (see
     dr.shloka_nav_line): the previous and next verse of this chapter —
     never across chapters — and the chapter's own full-chapter record
-    when one is written."""
+    when one is written. The full-chapter record itself then ends with a
+    line linking the previous and next chapters' records (`chapter_nav`,
+    see chapter_neighbours).
+
+    With dict.tags_keep, only those gloss types become blocks in each
+    verse record (see resolve_shloka_tags_keep)."""
     wrote = False
     entries: list[_ShlokaEntry] = []
+    keep = resolve_shloka_tags_keep(text, chapter, config)  # validate before writing anything
     seen_keys: dict[str, Path] = {}  # key -> the section it first appeared in
 
     if config.chapter_key and not config.shloka_key_prefix:
@@ -531,7 +558,7 @@ def process_shloka_chapter(text: gi.Text, chapter: gi.Chapter, config: DictConfi
             group_text = body[group_start:group_end]
             hindi: list[str] = []
             anvaya, blocks = dr.render_shloka_group(group_text, text.effective_gloss_types,
-                                                    source_for_warning=section, hindi_out=hindi)
+                                                    source_for_warning=section, hindi_out=hindi, keep=keep)
 
             # the key doubles as a headword so a bword:// link elsewhere (e.g. the
             # full-chapter view below) can resolve straight to this record
@@ -549,6 +576,12 @@ def process_shloka_chapter(text: gi.Text, chapter: gi.Chapter, config: DictConfi
         wrap_marker_with_link(e.shloka_text, e.key) if e.key else e.shloka_text for e in entries
     ] if config.chapter_key else []
     full_body = "\n\n".join(full_chapter_parts).strip()
+    if config.nav and full_body:
+        prev_ch, next_ch = chapter_nav
+        ch_nav = dr.shloka_nav_line((prev_ch, prev_ch) if prev_ch else None, None,
+                                    (next_ch, next_ch) if next_ch else None)
+        if ch_nav:
+            full_body += "\n\n" + ch_nav
     # the Up link only when the chapter's own full record is written below
     # MG: Update to remove "e:" (this is not really part of the key)
     up_key = config.chapter_key.removeprefix("e:") if (config.nav and full_body and config.chapter_key) else None
@@ -611,7 +644,26 @@ def check_unconfigured_chapter(text: gi.Text, chapter: gi.Chapter, folder: str) 
             STRICT_ERRORS.append(f"{section}: {n} <dict> tag(s) found, but {missing} — nothing is generated for them")
 
 
-def process_chapter(text: gi.Text, chapter: gi.Chapter, folder: str) -> bool:
+def chapter_neighbours(text: gi.Text, chapters: list[gi.Chapter], folder: str) -> dict[str, tuple[str | None, str | None]]:
+    """slug -> (previous, next) chapter_key (without "e:") among this
+    book's dict-enabled chapters that set chapter_key, in chapter order.
+    Used for the chapter links at the end of a dict.nav chapter's
+    full-chapter record."""
+    keyed: list[tuple[str, str]] = []
+    for ch in chapters:
+        cfg = DictConfig(text, ch, folder)
+        if cfg.is_enabled and cfg.chapter_key:
+            keyed.append((ch.slug, cfg.chapter_key.removeprefix("e:")))
+    out: dict[str, tuple[str | None, str | None]] = {}
+    for i, (slug, _) in enumerate(keyed):
+        prev_key = keyed[i - 1][1] if i > 0 else None
+        next_key = keyed[i + 1][1] if i + 1 < len(keyed) else None
+        out[slug] = (prev_key, next_key)
+    return out
+
+
+def process_chapter(text: gi.Text, chapter: gi.Chapter, folder: str,
+                    chapter_nav: tuple[str | None, str | None] = (None, None)) -> bool:
     """Returns True if at least one file was written for this chapter."""
     config = DictConfig(text, chapter, folder)
     if not config.is_enabled:
@@ -623,7 +675,7 @@ def process_chapter(text: gi.Text, chapter: gi.Chapter, folder: str) -> bool:
 
     if config.type == "notes":
         return process_notes_chapter(text, chapter, config)
-    return process_shloka_chapter(text, chapter, config)
+    return process_shloka_chapter(text, chapter, config, chapter_nav)
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -656,14 +708,20 @@ def main(argv: list[str] | None = None) -> int:
                         f"{text.dir} and {prev} both write to dict/{folder}/{text.slug}/ — "
                         f"two texts sharing a dictionary folder need different directory names"
                     )
-            for chapter in gi.discover_chapters(text):
+            chapters = list(gi.discover_chapters(text))
+            try:
+                neighbours = chapter_neighbours(text, chapters, folder)
+            except Exception as e:
+                print(f"\nFAILED while processing {text.dir}: {e}", file=sys.stderr)
+                raise
+            for chapter in chapters:
                 try:
                     config = DictConfig(text, chapter, folder)
                     if config.is_enabled:
                         any_enabled = True
                     elif STRICT:
                         check_unconfigured_chapter(text, chapter, folder)
-                    if process_chapter(text, chapter, folder):
+                    if process_chapter(text, chapter, folder, neighbours.get(chapter.slug, (None, None))):
                         slugs = written.setdefault(folder, [])
                         if text.slug not in slugs:
                             slugs.append(text.slug)

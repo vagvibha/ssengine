@@ -36,11 +36,16 @@ dictionaries:
 ```yaml
 dict:
   folder: kavya        # must be declared in dictionaries:, else the build fails
+  skip: [च, तु]         # optional: added to every dict-enabled chapter's skip
 ```
 
-`folder` is the only key allowed here. Everything else goes in the
-chapter's `meta.yaml`. Two books sharing a folder must have different
-directory names.
+`folder` and `skip` are the only keys allowed here. Everything else goes
+in the chapter's `meta.yaml`. Two books sharing a folder must have
+different directory names.
+
+`skip` saves repeating one list in every chapter: each chapter's
+`HEADER:skip=` is the book's list followed by the chapter's own, with a
+word that's in both written once.
 
 ### Chapter `meta.yaml`
 
@@ -50,18 +55,20 @@ A chapter is dictionary-enabled when its `meta.yaml` has a `dict:` block.
 |---|---|---|---|
 | `type` | text | both | **Required.** `notes` or `shloka`. |
 | `title` | text | both | Appended to the book title in `HEADER:title=`. Quote bracketed values: `title: "[सर्गः-१]"`. |
-| `skip` | list | both | Words for `HEADER:skip=` (omitted when empty). Chapter-only, no book-level inheritance. |
+| `skip` | list | both | Words for `HEADER:skip=` (omitted when empty), after the book's `dict.skip`. |
 | `chapter_key` | text | both | Also write `<chapter>-full.txt`: the whole chapter as one notes record under this key. |
-| `tags_keep` | list | notes | Which divs the full-chapter record keeps (see [below](#full-chapter-record-notes)). Needs `chapter_key`. |
+| `tags_keep` | list | both | Notes: which divs the full-chapter record keeps (see [below](#full-chapter-record-notes)); needs `chapter_key`. Shloka: which gloss types go into each verse record (see [Glosses kept](#glosses-kept-in-a-verse-record)). |
 | `shloka_key_prefix` | text | shloka | Generate a key for every shloka (see [Shloka keys](#shloka-keys)). |
 | `auto_shloka` | bool | shloka | `false` adds `HEADER:auto_shloka=false`. Default true. |
-| `nav` | bool | shloka | `true` ends every shloka record with a link line to the previous and next verse and the chapter (see [Verse navigation](#verse-navigation)). Needs `shloka_key_prefix`. Default false. |
+| `nav` | bool | shloka | `true` ends every shloka record with a link line to the previous and next verse and the chapter, and the full-chapter record with a link line to the previous and next chapter (see [Verse navigation](#verse-navigation)). Needs `shloka_key_prefix`. Default false. |
 
 The build fails if:
 - `dict:` has keys but no `type`, or `type` isn't `notes`/`shloka`
 - the book has no `dict.folder`
-- `tags_keep` is set on a shloka chapter or without `chapter_key`, lists
+- on a notes chapter, `tags_keep` is set without `chapter_key`, lists
   `details`, or names something unknown
+- on a shloka chapter, `tags_keep` names something that isn't one of the
+  book's gloss types
 - `nav` is set on a notes chapter, or without `shloka_key_prefix`
 
 ### Section frontmatter
@@ -249,6 +256,27 @@ HEADER:auto_shloka=false     (only when auto_shloka: false)
   in a [single-file chapter](#single-file-chapters)).
 - A shloka with neither syns nor a generated key is skipped with a
   warning.
+
+### Glosses kept in a verse record
+
+By default every gloss after a shloka becomes a block in its record.
+`tags_keep` limits that to the listed gloss types, in document order as
+usual; the others are left out with their content (a nested gloss goes
+with its container). `tags_keep: []` keeps none, so the record is just
+the verse, its keys and the nav line.
+
+The अन्वयः (`anvaya`) gloss always supplies the `++` keys, whether or
+not it is kept as a block, and a `hindi` gloss always becomes the
+`{{…}}` line. So a commentary-heavy text can index each verse by its
+anvaya without carrying the commentary into the dictionary:
+
+```yaml
+dict:
+  type: shloka
+  tags_keep: []          # or e.g. [anvaya, tika] to show those
+```
+
+This is separate from `exclude_site`, which only affects the website.
 - **Hindi:** a gloss of `data-type="hindi"` after the shloka is not a
   gloss block: its text (tags stripped, whitespace collapsed) becomes the
   `{{…}}` line, which the dictionary builder leaves out of the entry.
@@ -317,13 +345,26 @@ has no glosses, it takes the empty gloss line):
   verse and no `chapter_key` gets no line at all.
 - Every link points to a key written in the same run.
 
+With `nav: true` and `chapter_key`, the full-chapter record also ends
+(after a blank line) with a link line to the previous and next chapters:
+
+```
+‹ <a href="bword://BG-02">BG-02</a> · <a href="bword://BG-04">BG-04</a> ›
+```
+
+The neighbours are the book's other dict-enabled chapters that set
+`chapter_key` (notes or shloka), in chapter order; chapters without one
+are skipped over. The first chapter has no previous, the last no next,
+and a book with one such chapter gets no line.
+
 ### Full-chapter record (shloka)
 
 With `chapter_key`, `<chapter>-full.txt` is one notes-type record holding
 every shloka's text back to back. Each shloka's ending marker is linked
 to its own record (`<a href="bword://KS5-03">॥५।९।३॥</a>`) when
 `shloka_key_prefix` is set; otherwise a warning is printed and there are
-no links. `tags_keep` doesn't apply.
+no links. `tags_keep` doesn't apply. With `nav: true` it ends with the
+chapter link line (see [Verse navigation](#verse-navigation)).
 
 ---
 
